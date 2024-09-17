@@ -95,7 +95,7 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer arena.deinit();
 
-        var parser = Parser.init(tokens, arena.allocator());
+        var parser = try Parser.init(tokens, arena.allocator());
 
         if ((cmd == .parse) or (cmd == .evaluate)) {
             const expression = try parser.parseExpression();

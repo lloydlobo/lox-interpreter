@@ -12,29 +12,43 @@ const Token = @import("token.zig").Token;
 const tokenError = @import("main.zig").tokenError;
 
 pub const Parser = struct {
-    tokens: []const Token,
     allocator: Allocator,
     current: usize = 0, // index
+    tokens: std.MultiArrayList(Token), // []const Token is deprecated
+    tokens_len: usize, // count of tokens
 
     const Error = error{ParseError} || Allocator.Error;
 
-    pub fn init(tokens: []const Token, allocator: Allocator) Parser {
+    pub fn init(tokens: []const Token, allocator: Allocator) Allocator.Error!Parser {
+        const tokens_len = tokens.len;
+
+        var list = std.MultiArrayList(Token){};
+        try list.ensureTotalCapacity(allocator, tokens_len);
+        for (tokens) |token| list.appendAssumeCapacity(token);
+        assert(list.len == tokens_len);
+
         return .{
-            .tokens = tokens,
+            .tokens = list,
+            .tokens_len = tokens_len,
             .allocator = allocator,
         };
     }
 
+    // Since using arena allocator, does not seem necessary
+    // pub fn deinit(self: *Parser) void {
+    // Release memory allocated via `.enusreTotalCapacity(allocator, capacity);`
+    // self.tokens_soa.deinit(self.allocator);
+    // }
+
+    /// The caller owns the returned memory. Empties this ArrayList, Its
+    /// capacity is cleared, making deinit() safe but unnecessary to call.
     pub fn parse(self: *Parser) Allocator.Error![]Stmt {
         var statements = std.ArrayList(Stmt).init(self.allocator);
-
         while (!self.isAtEnd()) {
             if (try self.declaration()) |decl|
                 try statements.append(decl);
         }
 
-        // The caller owns the returned memory. Empties this ArrayList, Its
-        // capacity is cleared, making deinit() safe but unnecessary to call.
         return try statements.toOwnedSlice();
     }
 
@@ -46,40 +60,35 @@ pub const Parser = struct {
     }
 
     fn declaration(self: *Parser) Allocator.Error!?Stmt {
-        const stmt = outer: {
-            break :outer if (self.match(.{.@"var"}))
-                self.varDeclaration()
-            else inner: {
-                break :inner self.statement();
-            };
-        };
+        const stmt_result = if (self.match(.{.@"var"})) self.varDeclaration() else self.statement();
 
-        return (stmt catch |err| switch (err) {
-            error.ParseError => {
+        return (stmt_result) catch |err| switch (err) {
+            error.ParseError => blk: {
                 self.synchronize();
-                return null;
+                break :blk null;
             },
             else => |other| other,
-        });
+        };
     }
 
     /// Requires and consumes an identifier token for the variable name; and handles either assignment or no assignment.
     fn varDeclaration(self: *Parser) Error!Stmt {
         const name: Token = try self.consume(.identifier, "Expect variable name.");
         const initializer: ?*Expr = if (self.match(.{.equal})) try self.expression() else null;
+
         _ = try self.consume(.semicolon, "Expect ';' after variable declaration.");
 
-        return .{ .@"var" = .{ .name = name, .initializer = initializer } };
+        return .{
+            .@"var" = .{ .name = name, .initializer = initializer },
+        };
     }
 
     // if the next token doesn’t look like any known kind of statement, we
     // assume it must be an expression statement. final fallthrough case, since
     // it’s hard to proactively recognize an expression from its first token.
     fn statement(self: *Parser) Error!Stmt {
-        if (self.match(.{.print}))
-            return self.printStatement();
-        if (self.match(.{.left_brace}))
-            return .{ .block = (try self.block()) };
+        if (self.match(.{.print})) return self.printStatement();
+        if (self.match(.{.left_brace})) return .{ .block = (try self.block()) };
 
         return self.expressionStatement();
     }
@@ -104,9 +113,8 @@ pub const Parser = struct {
         // Avoid inifinite loops with `isAtEnd()` if parsing invalid code.
         // If forgot a closing `}`, the parser needs to not get stuck.
         while ((!self.check(.right_brace)) and !self.isAtEnd()) {
-            if ((try self.declaration())) |decl| {
+            if ((try self.declaration())) |decl|
                 try statements.append(decl);
-            }
         }
 
         // NOTE: Using `}}` to escape } used by Zig for formating arguments
@@ -123,39 +131,34 @@ pub const Parser = struct {
 
     // Enhances single token of lookahead similar to binary operators like `+`.
     fn assignment(self: *Parser) Error!*Expr {
-        // Parse the left-hand side, which can be any expression of higher
-        // precedence.
+        // Parse "lhs", which can be any expression of higher precedence.
         const expr: *Expr = try self.equality();
 
         // When we find an `=`, we parse right-hand side, and then wrap it all
-        // up in an assignment expression tree node.
+        // up in an assignment expression tree node. Since assignment is
+        // right-associative, recursively call 'assignment()' to parse "rhs".
         if (self.match(.{.equal})) {
             const equals = self.previous();
-
-            // Since assignment is right-associative, recursively call
-            // 'assignment()' to parse "rhs".
             const value = try self.assignment();
 
             // The trick is to look at "lhs" expression and figure out what
             // kind of assignment target it is - **just before we create** the
             // assignment expression node!
             return switch (expr.*) {
-                .variable => |name| try self.createExpr(.{
-                    // This conversion works as every valid assignment target
-                    // happens to also be valid syntax as a normal expression.
-                    .assign = .{ .name = name, .value = value },
-                }),
+                // This conversion works as every valid assignment target
+                // happens to also be valid syntax as a normal expression.
+                .variable => |name| try self.createExpr(.{ .assign = .{ .name = name, .value = value } }),
+
                 // We report an error if the left-hand side isn’t a valid
                 // assignment target, but we don’t throw it because the parser
                 // isn’t in a confused state where we need to go into panic
                 // mode and synchronize. That ensures we report an error on
                 // code such as `a + b = c;`
-                else => parseError(equals, "Invalid assignment target."),
-
+                //
                 // TODO: Add fields later to support:
                 // `a = 3;`    // OK.
                 // `(a) = 3;`  // Error.
-
+                else => parseError(equals, "Invalid assignment target."),
             };
         }
 
@@ -292,6 +295,7 @@ pub const Parser = struct {
     fn createExpr(self: *Parser, value: Expr) Allocator.Error!*Expr {
         const expr = try self.allocator.create(Expr);
         errdefer self.allocator.destroy(expr);
+
         expr.* = value;
 
         return expr;
@@ -306,56 +310,59 @@ pub const Parser = struct {
         } else false;
     }
 
-    fn check(self: *Parser, @"type": Token.Type) bool {
-        if (self.isAtEnd()) return false;
+    fn currentType(self: *const Parser) Token.Type {
+        assert(self.current < self.tokens_len);
+        return self.tokens.items(.type)[self.current]; // see user: xy1 src/main.zig -> fn current
+    }
 
-        return self.peek().type == @"type";
+    fn check(self: *Parser, @"type": Token.Type) bool {
+        return switch (self.currentType()) {
+            .eof => false, // if is at end
+            else => |x| (x == @"type"),
+        };
     }
 
     fn isAtEnd(self: *Parser) bool {
-        return self.peek().type == .eof;
+        return (self.currentType() == .eof);
     }
 
     /// Increments current counter and returns the token if is not at end.
     fn advance(self: *Parser) Token {
         if (!self.isAtEnd()) self.current += 1;
-        assert(self.current <= self.tokens.len);
+        assert(self.current != 0 and self.current < self.tokens_len);
 
         return self.previous();
     }
 
-    fn previous(self: *Parser) Token {
-        assert(self.current > 0);
-
-        return self.tokens[self.current - 1];
-    }
-
-    fn previousValue(self: *Parser) Expr.Value {
-        return switch (self.previous().literal.?) {
-            .str => |val| .{ .str = val },
-            .num => |val| .{ .num = val },
-        };
-    }
-
-    fn currentType(self: *const Parser) Token.Type {
-        const __is_multi_array_list = false; // see user: xy1 src/main.zig -> fn current
-        if (__is_multi_array_list)
-            return self.tokens.items(.kind)[self.current];
-
-        return self.tokens[self.current].type;
-    }
-
     fn peek(self: *Parser) Token {
-        assert(self.current >= 0);
-
-        return self.tokens[self.current];
+        assert(self.current >= 0); // undefined implementaion logic if called when current index is 0
+        return self.tokens.get(self.current);
     }
 
     fn consume(self: *Parser, @"type": Token.Type, comptime message: []const u8) Error!Token {
-        if (self.check(@"type"))
-            return self.advance();
+        return if (self.check(@"type")) self.advance() else parseError(self.peek(), message);
+    }
 
-        return parseError(self.peek(), message);
+    fn previous(self: *Parser) Token {
+        assert(self.current > 0);
+        return self.tokens.get(self.current - 1);
+    }
+
+    fn previousLiteral(self: *Parser) ?Token.Literal {
+        assert(self.current > 0);
+        return self.tokens.items(.literal)[self.current - 1];
+    }
+
+    fn previousType(self: *Parser) Token.Type {
+        assert(self.current > 0);
+        return self.tokens.items(.type)[self.current - 1];
+    }
+
+    fn previousValue(self: *Parser) Expr.Value {
+        return if (self.previousLiteral()) |literal| switch (literal) {
+            .str => |val| .{ .str = val },
+            .num => |val| .{ .num = val },
+        } else unreachable;
     }
 
     /// In a recursive descent parser, state is managed by the call stack. To reset
@@ -364,23 +371,11 @@ pub const Parser = struct {
     /// boundary (semicolon or keyword) is reached, preventing cascaded errors and
     /// allowing parsing to continue.
     fn synchronize(self: *Parser) void {
-        // see https://craftinginterpreters.com/parsing-expressions.html
-        // see also ^ /parsing-expressions.html#synchronizing-a-recursive-descent-parser
         _ = self.advance();
         while (!self.isAtEnd()) {
-            if (self.previous().type == .semicolon)
-                return;
-
-            switch (self.peek().type) {
-                .class,
-                .fun,
-                .@"var",
-                .@"for",
-                .@"if",
-                .@"while",
-                .print,
-                .@"return",
-                => return,
+            if (self.previousType() == .semicolon) return;
+            switch (self.currentType()) {
+                .class, .fun, .@"var", .@"for", .@"if", .@"while", .print, .@"return" => return,
                 else => {},
             }
             _ = self.advance();
