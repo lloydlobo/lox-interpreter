@@ -1,0 +1,71 @@
+// Parse expression
+// (100 + (1111 * 2));
+
+var foo = "before";
+print foo;
+var foo = "after";
+print foo;
+
+var baz = "before";
+print baz;
+var baz = "after";
+print baz;
+
+var quz = 73 + 26 * 20;
+print quz;
+var hello = 26 * 20;
+print quz + hello;
+var foo;
+print foo;
+
+// Scopes (1)
+{
+    var a = "first";
+    print a; // "first".
+}
+{
+    var a = "second";
+    print a; // "second".
+}
+
+// Scopes (2)
+var bar = "global bar";
+var world = "global world";
+var hello = "global hello";
+{
+  var bar = "outer bar";
+  var world = "outer world";
+  {
+    var bar = "inner bar";
+    print bar;
+    print world;
+    print hello;
+  }
+  print bar;
+  print world;
+  print hello;
+}
+print bar;
+print world;
+print hello;
+
+
+// Scopes (3)
+var baz = (91 * 16) - 61;
+{
+    var world = "quz" + "89";
+    print world;
+}
+print baz;
+
+
+// Block syntax
+{
+    var hello = 88;
+    {
+        var foo = 88;
+        print foo;
+    }
+    print hello;
+}
+

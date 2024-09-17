@@ -1,0 +1,26 @@
+# Zig build artifacts
+main
+zig-cache/
+.zig-cache/
+zig-out/
+
+# Compiled binary output
+bin/
+!bin/.gitkeep
+
+# Ignore any .o or .h files generated during build
+*.o
+*.h
+
+# Ignore OS and editor specific files
+**/.DS_Store
+*.swp
+*~
+archive
+.codecrafters.bak
+.git.bak
+.zig-cache.bak
+your_program.sh.bak
+codecrafters.yml
+test.log
+vgcore.*
