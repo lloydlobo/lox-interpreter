@@ -1,6 +1,15 @@
 // test.lox
 
 
+print("# While Loops");
+
+var counter = 0;
+while (counter < 10) {
+    print counter;
+    counter = counter + 1;
+}
+
+
 print("# Logical Operators");
 
 var logical = (1 or 2);

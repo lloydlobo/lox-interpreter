@@ -8,7 +8,6 @@ const AstPrinter = @import("astprinter.zig").AstPrinter;
 const Expr = @import("expr.zig").Expr;
 const Scanner = @import("scanner.zig").Scanner;
 const Stmt = @import("stmt.zig").Stmt;
-const If = Stmt.If;
 const Token = @import("token.zig").Token;
 const tokenError = @import("main.zig").tokenError;
 
@@ -83,6 +82,17 @@ pub const Parser = struct {
         };
     }
 
+    // if the next token doesn’t look like any known kind of statement, we
+    // assume it must be an expression statement. final fallthrough case, since
+    // it’s hard to proactively recognize an expression from its first token.
+    fn statement(self: *Parser) Error!Stmt {
+        if (self.match(.{.@"if"})) return self.ifStatement();
+        if (self.match(.{.print})) return self.printStatement();
+        if (self.match(.{.@"while"})) return self.whileStatement();
+        if (self.match(.{.left_brace})) return .{ .block = (try self.block()) };
+        return self.expressionStatement();
+    }
+
     /// Requires and consumes an identifier token for the variable name; and handles either assignment or no assignment.
     fn varDeclaration(self: *Parser) Error!Stmt {
         const name: Token = try self.consume(.identifier, "Expect variable name.");
@@ -91,14 +101,17 @@ pub const Parser = struct {
         return .{ .var_stmt = .{ .name = name, .initializer = initializer } };
     }
 
-    // if the next token doesn’t look like any known kind of statement, we
-    // assume it must be an expression statement. final fallthrough case, since
-    // it’s hard to proactively recognize an expression from its first token.
-    fn statement(self: *Parser) Error!Stmt {
-        if (self.match(.{.@"if"})) return self.ifStatement();
-        if (self.match(.{.print})) return self.printStatement();
-        if (self.match(.{.left_brace})) return .{ .block = (try self.block()) };
-        return self.expressionStatement();
+    fn whileStatement(self: *Parser) Error!Stmt {
+        _ = try self.consume(.left_paren, "Expect '(' after 'while'.");
+        const condition = try self.expression();
+        _ = try self.consume(.right_paren, "Expect ')' after condition.");
+
+        return (try self.createStmt(.{
+            .while_stmt = .{
+                .condition = condition,
+                .body = try self.createStmt(try self.statement()),
+            },
+        })).*;
     }
 
     // createStmt uses the allocator to allocate memory on the heap, avoiding
@@ -113,7 +126,7 @@ pub const Parser = struct {
         const condition: *Expr = try self.expression();
         _ = try self.consume(.right_paren, "Expect ')' after if condition.");
 
-        return (try self.createStmt(.{ .if_stmt = If{
+        return (try self.createStmt(.{ .if_stmt = .{
             .condition = condition,
             .then_branch = try self.createStmt(try self.statement()),
             .else_branch = if (self.match(.{.@"else"})) try self.createStmt(try self.statement()) else null,

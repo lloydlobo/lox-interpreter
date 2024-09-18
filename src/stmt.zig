@@ -13,22 +13,28 @@ pub const Stmt = union(enum) {
     if_stmt: If,
     print: *Expr,
     var_stmt: Var,
+    while_stmt: While,
 
+    // since else clauses are optional, and there is no explicit delimiter
+    // marking the end of the if statement, the grammar is ambiguous when you
+    // nest ifs in this way ─ This classic syntax pitfall is the [dangling else
+    // problem](https://en.wikipedia.org/wiki/Dangling_else).
+    // Solution: " `else` is bound to the nearest `if` that precedes it. "
+    // See https://craftinginterpreters.com/appendix-ii.html#if-statement
     pub const If = struct {
         condition: *Expr,
         then_branch: *Stmt,
         else_branch: ?*Stmt,
-        // since else clauses are optional, and there is no explicit
-        // delimiter marking the end of the if statement, the grammar
-        // is ambiguous when you nest ifs in this way ─ This classic
-        // syntax pitfall is the dangling else problem.
-        // Solution: " `else` is bound to the nearest `if` that precedes it. "
-        // see also https://craftinginterpreters.com/appendix-ii.html#if-statement
     };
 
     pub const Var = struct {
         name: Token,
         initializer: ?*Expr,
+    };
+
+    pub const While = struct {
+        condition: *Expr,
+        body: *Stmt,
     };
 };
 

@@ -85,6 +85,10 @@ pub const Interpreter = struct {
                 const value: Expr.Value = if (var_stmt.initializer) |expr| try self.evaluate(expr) else .{ .nil = {} };
                 try self.environment.define(var_stmt.name.lexeme, value);
             },
+            .while_stmt => |while_stmt| { // similar to If visit method
+                while (isTruthy(try self.evaluate(while_stmt.condition)))
+                    _ = try self.execute(while_stmt.body, writer);
+            },
             .print => |expr| {
                 printValue(writer, try self.evaluate(expr));
                 writer.writeByte('\n') catch return error.IoError; // multi-line

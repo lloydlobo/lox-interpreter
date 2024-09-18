@@ -25,6 +25,7 @@ pub const Expr = union(enum) {
         value: *Expr,
     };
 
+    /// "Binary    : Expr left, Token operator, Expr right",
     pub const Binary = struct {
         left: *Expr,
         /// → "==" | "!=" | "<" | "<=" | ">" | ">=" | "+"  | "-"  | "*" | "/" ;
@@ -32,6 +33,7 @@ pub const Expr = union(enum) {
         right: *Expr,
     };
 
+    /// "Logical  : Expr left, Token operator, Expr right",
     // We could reuse the existing Expr.Binary class for these two new expressions since they have the same fields. But then visitBinaryExpr() would have to check to see if the operator is one of the logical operators and use a different code path to handle the short circuiting. I think it’s cleaner to define a new class for these operators so that they get their own visit method.
     pub const Logical = struct {
         left: *Expr,
@@ -39,11 +41,13 @@ pub const Expr = union(enum) {
         right: *Expr,
     };
 
+    /// "Unary    : Token operator, Expr right",
     pub const Unary = struct {
         operator: Token,
         right: *Expr,
     };
 
+    /// "Literal  : Object value",
     pub const Value = union(enum) {
         bool: bool,
         nil: void,
