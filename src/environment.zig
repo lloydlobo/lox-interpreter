@@ -34,34 +34,22 @@ pub const Environment = struct {
     // When a local variable has the same name as  a variable in an enclosing
     // scope, it shadows the outer one. Code inside the block can't see it any
     // more—it is hidden in the "shadow" cas by the inner one—but it's still there.
+    // `pub`: Required by `Interpreter.execute() -> .block => |statements|`
     pub fn initEnclosing(enclosing: *Self, allocator: Allocator) Environment {
-        // `pub`: Required by `Interpreter.execute() -> .block => |statements|`
         return .{
             .values = StringHashMap(Expr.Value).init(allocator),
             .enclosing = enclosing,
         };
     }
 
-    pub fn deinit(self: *Self) void {
-        var this = self;
-        this.values.deinit();
-    }
-
-    /// Define (declare) a new variable by binding a name to a value.
-    ///
-    // if (false) {
-    //     // TODO: hack to allow shadowing variables with `var`
-    //     const res: GetOrPutResult = try self.values.getOrPut(name);
-    //     if (res.found_existing) {
-    //         try self.assign(.{ .literal = .{ .str = self.values.get(name).?.str }, .lexeme = name, .type = .identifier, .line = 1 }, value);
-    //         // return error.VariableAlreadyDeclared; // do not clobber any existing data
-    //     }
-    //     res.value_ptr.* = value;
-    // } else {
-    //     ...
-    // }
     pub fn define(self: *Self, name: []const u8, value: Expr.Value) Error!void {
-        assert(name.len > 0 and root.isAlphaNumeric(name[0])); // expect token name start with alphanumeric
+        assert(name.len > 0);
+        // TODO: ==128231== Syscall param msync(start) points to uninitialised byte(s)
+        //       ==128231==  Address 0x1ffeffa000 is on thread 1's stack
+        //       ==128231==  in frame #6, created by debug.StackIterator.next_internal (debug.zig:737)
+        //       ==128231==  Uninitialised value was created by a stack allocation
+        //       ==128231==    at 0x10B2A24: debug.StackIterator.next_internal (debug.zig:737)
+        // assert(!root.isAlphaNumeric(name[0])); // expect token name start with alphanumeric
 
         try self.values.put(name, value); //clobbers values
     }
@@ -80,7 +68,8 @@ pub const Environment = struct {
     // ends when execution passes the closing }. Any variables declared inside
     // the block disappear.
     pub fn get(self: *const Self, name: Token) Error!Expr.Value {
-        assert(name.lexeme.len > 0 and root.isAlphaNumeric(name.lexeme[0])); // expect token name start with alphanumeric
+        assert(name.lexeme.len > 0);
+        assert(root.isAlphaNumeric(name.lexeme[0])); // expect token name start with alphanumeric
 
         assert(if (name.literal) |literal| switch (literal) {
             .str => |x| x.len > 0,
@@ -98,7 +87,8 @@ pub const Environment = struct {
     /// Assign a new value to an existing variable.
     /// Note: Also no implicit var declaration. See also: https://craftinginterpreters.com/statements-and-state.html#design-note
     pub fn assign(self: *Self, name: Token, value: Expr.Value) Error!void {
-        assert(name.lexeme.len > 0 and root.isAlphaNumeric(name.lexeme[0])); // expect token name start with alphanumeric
+        assert(name.lexeme.len > 0);
+        assert(root.isAlphaNumeric(name.lexeme[0])); // expect token name start with alphanumeric
 
         assert(if (name.literal) |literal| switch (literal) {
             .str => |x| x.len > 0,

@@ -8,24 +8,10 @@ const Allocator = mem.Allocator;
 const @"error" = @import("main.zig").@"error";
 const Token = @import("token.zig").Token;
 
-// see also https://craftinginterpreters.com/scanning.html#recognizing-lexemes
+// See also https://craftinginterpreters.com/scanning.html#recognizing-lexemes
 
 pub const Scanner = struct {
     source: []const u8,
-
-    // A MultiArrayList stores a list of a struct or tagged union type.
-    // Instead of storing a single list of items, MultiArrayList stores
-    // separate lists for each field of the struct or lists of tags and bare
-    // unions.
-    // This allows for memory savings if the struct or union has padding, and
-    // also improves cache usage if only some fields or just tags are needed
-    // for a computation.  The primary API for accessing fields is the
-    // `slice()` function, which computes the start pointers for the array of
-    // each field.  From the slice you can call `.items(.<field_name>)` to
-    // obtain a slice of field values.
-    // For unions you can call `.items(.tags)` or `.items(.data)`.
-    //
-    //   pub fn MultiArrayList(comptime T: type) type
     tokens: std.ArrayList(Token),
 
     start: usize = 0,
@@ -180,7 +166,10 @@ pub const Scanner = struct {
 
     fn peekNext(self: *Scanner) u8 {
         // return if (self.isAtEnd()) 0 else self.source[self.current + 1];
-        return if ((self.current + 1) >= self.source.len) 0 else self.source[self.current + 1];
+        return if ((self.current + 1) >= self.source.len)
+            0
+        else
+            self.source[self.current + 1];
     }
 
     fn isAtEnd(self: *Scanner) bool {
@@ -208,112 +197,3 @@ pub const Scanner = struct {
         });
     }
 };
-
-test "if not using ArrayList(Token) -> basic usage: MultiArrayList(Token){}" { // copied from lib/std/multi_array_list.zig
-    const ally = testing.allocator;
-    var list = std.MultiArrayList(Token){};
-    defer list.deinit(ally);
-
-    try testing.expectEqual(@as(usize, 0), list.items(.lexeme).len);
-
-    try list.ensureTotalCapacity(ally, 2);
-
-    list.appendAssumeCapacity(.{
-        .literal = .{ .str = "hello" },
-        .type = .identifier,
-        .line = 1,
-        .lexeme = "a",
-    });
-    list.appendAssumeCapacity(.{
-        .literal = .{ .str = "world" },
-        .type = .identifier,
-        .line = 2,
-        .lexeme = "b",
-    });
-    // std.debug.print("{any}\n", .{list.get(0)});
-
-    try testing.expectEqualSlices(u32, list.items(.line), &[_]u32{ 1, 2 });
-    try testing.expectEqualSlices([]const u8, list.items(.lexeme), &[_][]const u8{ "a", "b" });
-    try testing.expectEqualSlices(?Token.Literal, list.items(.literal), &[_]?Token.Literal{ .{ .str = "hello" }, .{ .str = "world" } });
-
-    try testing.expectEqual(@as(usize, 2), list.items(.lexeme).len);
-    try testing.expectEqualStrings("a", list.items(.lexeme)[0]);
-    try testing.expectEqualStrings("b", list.items(.lexeme)[1]);
-    try testing.expectEqual(@as(usize, 2), list.items(.literal).len);
-    try testing.expectEqualStrings("hello", list.items(.literal)[0].?.str);
-    try testing.expectEqualStrings("world", list.items(.literal)[1].?.str);
-
-    list.appendAssumeCapacity(.{
-        .literal = .{ .str = "!" },
-        .type = .identifier,
-        .line = 3,
-        .lexeme = "c",
-    });
-
-    try testing.expectEqualSlices(u32, list.items(.line), &[_]u32{ 1, 2, 3 });
-    try testing.expectEqualSlices([]const u8, list.items(.lexeme), &[_][]const u8{ "a", "b", "c" });
-    try testing.expectEqualSlices(?Token.Literal, list.items(.literal), &[_]?Token.Literal{ .{ .str = "hello" }, .{ .str = "world" }, .{ .str = "!" } });
-
-    try testing.expectEqual(@as(usize, 3), list.items(.lexeme).len);
-    try testing.expectEqualStrings("a", list.items(.lexeme)[0]);
-    try testing.expectEqualStrings("b", list.items(.lexeme)[1]);
-    try testing.expectEqualStrings("c", list.items(.lexeme)[2]);
-    try testing.expectEqual(@as(usize, 3), list.items(.literal).len);
-    try testing.expectEqualStrings("hello", list.items(.literal)[0].?.str);
-    try testing.expectEqualStrings("world", list.items(.literal)[1].?.str);
-    try testing.expectEqualStrings("!", list.items(.literal)[2].?.str);
-
-    // Add 6 more items to force a capacity increase.
-    const variables = &[_][]const u8{ "a", "b", "c", "d", "e", "f", "h", "i", "j" };
-    const assigned_var_count = list.items(.lexeme).len;
-    assert(variables.len == (6 + assigned_var_count));
-    var i: usize = 0;
-    const line = list.items(.line).len;
-    while (i < (variables.len - assigned_var_count)) : (i += 1) {
-        try list.append(ally, .{
-            .literal = .{ .str = "whatever" },
-            .type = .identifier,
-            .line = (@as(u32, @intCast(line)) + 1) + @as(u32, @intCast(i)),
-            .lexeme = variables[assigned_var_count + i],
-        });
-    }
-
-    try testing.expectEqualSlices(
-        u32,
-        &[_]u32{ 1, 2, 3, 4, 5, 6, 7, 8, 9 },
-        list.items(.line),
-    );
-    try testing.expectEqualSlices(
-        []const u8,
-        &[_][]const u8{ "a", "b", "c", "d", "e", "f", "h", "i", "j" },
-        list.items(.lexeme),
-    );
-
-    list.shrinkAndFree(ally, 3);
-
-    try testing.expectEqualSlices(u32, list.items(.line), &[_]u32{ 1, 2, 3 });
-    try testing.expectEqualSlices([]const u8, list.items(.lexeme), &[_][]const u8{ "a", "b", "c" });
-    try testing.expectEqualSlices(?Token.Literal, list.items(.literal), &[_]?Token.Literal{ .{ .str = "hello" }, .{ .str = "world" }, .{ .str = "!" } });
-
-    try testing.expectEqual(@as(usize, 3), list.items(.lexeme).len);
-    try testing.expectEqualStrings("a", list.items(.lexeme)[0]);
-    try testing.expectEqualStrings("b", list.items(.lexeme)[1]);
-    try testing.expectEqualStrings("c", list.items(.lexeme)[2]);
-    try testing.expectEqual(@as(usize, 3), list.items(.literal).len);
-    try testing.expectEqualStrings("hello", list.items(.literal)[0].?.str);
-    try testing.expectEqualStrings("world", list.items(.literal)[1].?.str);
-    try testing.expectEqualStrings("!", list.items(.literal)[2].?.str);
-
-    list.set(try list.addOne(ally), .{
-        .literal = .{ .str = "xnopyt" },
-        .type = .identifier,
-        .line = 4,
-        .lexeme = "d",
-    });
-
-    try testing.expectEqualStrings("xnopyt", list.pop().literal.?.str);
-    try testing.expectEqualStrings("c", if (list.popOrNull()) |elem| elem.lexeme else "");
-    try testing.expectEqual(@as(u32, 2), list.pop().line);
-    try testing.expectEqual("a", list.pop().lexeme);
-    try testing.expectEqual(@as(?Token, null), list.popOrNull());
-}

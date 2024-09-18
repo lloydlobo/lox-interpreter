@@ -5,7 +5,7 @@ const assert = std.debug.assert;
 
 pub fn isAlphaNumeric(c: u8) bool {
     return switch (c) {
-        inline '_', 'a'...'z', 'A'...'Z', '0'...'9' => true,
+        '_', 'a'...'z', 'A'...'Z', '0'...'9' => true,
         else => false,
     };
 }

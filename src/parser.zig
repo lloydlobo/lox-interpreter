@@ -4,11 +4,12 @@ const assert = std.debug.assert;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 
+const AstPrinter = @import("astprinter.zig").AstPrinter;
 const Expr = @import("expr.zig").Expr;
 const Scanner = @import("scanner.zig").Scanner;
 const Stmt = @import("stmt.zig").Stmt;
+const IfStmt = Stmt.IfStmt;
 const Token = @import("token.zig").Token;
-
 const tokenError = @import("main.zig").tokenError;
 
 pub const Parser = struct {
@@ -34,12 +35,6 @@ pub const Parser = struct {
         };
     }
 
-    // Since using arena allocator, does not seem necessary
-    // pub fn deinit(self: *Parser) void {
-    // Release memory allocated via `.enusreTotalCapacity(allocator, capacity);`
-    // self.tokens_soa.deinit(self.allocator);
-    // }
-
     /// The caller owns the returned memory. Empties this ArrayList, Its
     /// capacity is cleared, making deinit() safe but unnecessary to call.
     pub fn parse(self: *Parser) Allocator.Error![]Stmt {
@@ -59,8 +54,28 @@ pub const Parser = struct {
         };
     }
 
+    // should s(statement) be union?
+    fn createStmt(self: *Parser, value: Stmt) Allocator.Error!*Stmt {
+        const stmt = try self.allocator.create(Stmt);
+        errdefer self.allocator.destroy(stmt);
+
+        stmt.* = value;
+        return stmt;
+    }
+
+    fn createExpr(self: *Parser, value: Expr) Allocator.Error!*Expr {
+        const expr = try self.allocator.create(Expr);
+        errdefer self.allocator.destroy(expr);
+
+        expr.* = value;
+        return expr;
+    }
+
     fn declaration(self: *Parser) Allocator.Error!?Stmt {
-        const stmt_result = if (self.match(.{.@"var"})) self.varDeclaration() else self.statement();
+        const stmt_result = if (self.match(.{.@"var"}))
+            self.varDeclaration()
+        else
+            self.statement();
 
         return (stmt_result) catch |err| switch (err) {
             error.ParseError => blk: {
@@ -75,22 +90,37 @@ pub const Parser = struct {
     fn varDeclaration(self: *Parser) Error!Stmt {
         const name: Token = try self.consume(.identifier, "Expect variable name.");
         const initializer: ?*Expr = if (self.match(.{.equal})) try self.expression() else null;
-
         _ = try self.consume(.semicolon, "Expect ';' after variable declaration.");
-
-        return .{
-            .@"var" = .{ .name = name, .initializer = initializer },
-        };
+        return .{ .var_stmt = .{ .name = name, .initializer = initializer } };
     }
 
     // if the next token doesn’t look like any known kind of statement, we
     // assume it must be an expression statement. final fallthrough case, since
     // it’s hard to proactively recognize an expression from its first token.
     fn statement(self: *Parser) Error!Stmt {
+        if (self.match(.{.@"if"})) return self.ifStatement();
         if (self.match(.{.print})) return self.printStatement();
         if (self.match(.{.left_brace})) return .{ .block = (try self.block()) };
-
         return self.expressionStatement();
+    }
+
+    // createStmt uses the allocator to allocate memory on the heap, avoiding
+    // stack lifetime issues. By dynamically allocating the then_branch, we
+    // avoid referencing memory that would be invalidated after the function
+    // returns. The then_branch pointer now refers to memory that persists
+    // beyond the function scope, ensuring that it's valid when later
+    // referenced in the IfStmt.
+    // See also https://craftinginterpreters.com/control-flow.html
+    fn ifStatement(self: *Parser) Error!Stmt {
+        _ = try self.consume(.left_paren, "Expect '(' after 'if'.");
+        const condition: *Expr = try self.expression();
+        _ = try self.consume(.right_paren, "Expect ')' after if condition.");
+
+        return (try self.createStmt(.{ .if_stmt = IfStmt{
+            .condition = condition,
+            .then_branch = try self.createStmt(try self.statement()),
+            .else_branch = if (self.match(.{.@"else"})) try self.createStmt(try self.statement()) else null,
+        } })).*;
     }
 
     fn printStatement(self: *Parser) Error!Stmt {
@@ -109,25 +139,20 @@ pub const Parser = struct {
 
     fn block(self: *Parser) Error![]Stmt {
         var statements = std.ArrayList(Stmt).init(self.allocator);
-
         // Avoid inifinite loops with `isAtEnd()` if parsing invalid code.
         // If forgot a closing `}`, the parser needs to not get stuck.
         while ((!self.check(.right_brace)) and !self.isAtEnd()) {
             if ((try self.declaration())) |decl|
                 try statements.append(decl);
         }
-
-        // NOTE: Using `}}` to escape } used by Zig for formating arguments
-        _ = try self.consume(.right_brace, "Expect '}}' after block.");
+        _ = try self.consume(.right_brace, "Expect '}}' after block."); // note: Using `}}` to escape } used by Zig for formating arguments
 
         // nb. Having block() return the raw list of statements and leaving it to
         // statement() to wrap the list in a Stmt.Block looks a little odd. I did
         // it that way because we’ll reuse block() later for parsing function
         // bodies and we don’t want that body wrapped in a Stmt.Block.
-        return (try statements.toOwnedSlice());
+        return try statements.toOwnedSlice();
     }
-
-    // fn block(self: *Parser) Error!*Expr ...
 
     // Enhances single token of lookahead similar to binary operators like `+`.
     fn assignment(self: *Parser) Error!*Expr {
@@ -141,19 +166,15 @@ pub const Parser = struct {
             const equals = self.previous();
             const value = try self.assignment();
 
-            // The trick is to look at "lhs" expression and figure out what
-            // kind of assignment target it is - **just before we create** the
-            // assignment expression node!
+            // The trick is to look at "lhs" expression and figure out what kind of assignment target
+            // it is - **just before we create** the assignment expression node!
             return switch (expr.*) {
-                // This conversion works as every valid assignment target
-                // happens to also be valid syntax as a normal expression.
+                // This conversion works as every valid assignment target happens to also be valid syntax as a normal expression.
                 .variable => |name| try self.createExpr(.{ .assign = .{ .name = name, .value = value } }),
 
-                // We report an error if the left-hand side isn’t a valid
-                // assignment target, but we don’t throw it because the parser
-                // isn’t in a confused state where we need to go into panic
-                // mode and synchronize. That ensures we report an error on
-                // code such as `a + b = c;`
+                // We report an error if the left-hand side isn’t a valid assignment target, but we don’t
+                // throw it because the parser isn’t in a confused state where we need to go into panic mode
+                // and synchronize. That ensures we report an error on code such as `a + b = c;`
                 //
                 // TODO: Add fields later to support:
                 // `a = 3;`    // OK.
@@ -290,15 +311,6 @@ pub const Parser = struct {
         //
         //
         return parseError(self.peek(), "Expect expression.");
-    }
-
-    fn createExpr(self: *Parser, value: Expr) Allocator.Error!*Expr {
-        const expr = try self.allocator.create(Expr);
-        errdefer self.allocator.destroy(expr);
-
-        expr.* = value;
-
-        return expr;
     }
 
     fn match(self: *Parser, types: anytype) bool {
@@ -452,3 +464,19 @@ pub const Parser = struct {
 //                      | block ;
 //
 //      block          → "{" declaration* "}" ;
+
+// n.b
+//
+// A MultiArrayList stores a list of a struct or tagged union type.
+// Instead of storing a single list of items, MultiArrayList stores
+// separate lists for each field of the struct or lists of tags and bare
+// unions.
+// This allows for memory savings if the struct or union has padding, and
+// also improves cache usage if only some fields or just tags are needed
+// for a computation.  The primary API for accessing fields is the
+// `slice()` function, which computes the start pointers for the array of
+// each field.  From the slice you can call `.items(.<field_name>)` to
+// obtain a slice of field values.
+// For unions you can call `.items(.tags)` or `.items(.data)`.
+//
+//   pub fn MultiArrayList(comptime T: type) type

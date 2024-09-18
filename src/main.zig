@@ -95,11 +95,15 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer arena.deinit();
 
-        var parser = try Parser.init(tokens, arena.allocator());
+        const allocator = arena.allocator();
+
+        var parser = try Parser.init(tokens, allocator);
 
         if ((cmd == .parse) or (cmd == .evaluate)) {
             const expression = try parser.parseExpression();
-            if (g_had_error) break :blk; // stop if syntax error
+
+            if (g_had_error)
+                break :blk; // stop if syntax error
 
             if (cmd == .parse) {
                 try AstPrinter.print(stdout_writer, expression.?);
@@ -107,7 +111,7 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
             }
 
             if (cmd == .evaluate) {
-                var interpreter = try Interpreter.init(arena.allocator());
+                var interpreter = try Interpreter.init(allocator);
                 try interpreter.interpretExpression(expression.?, stdout_writer);
                 break :blk;
             }
@@ -115,7 +119,13 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
 
         if (cmd == .run) {
             const statements = try parser.parse();
-            if (g_had_error) break :blk; // stop if syntax error
+            if (g_had_error)
+                break :blk; // stop if syntax error
+
+            // DEBUGGING
+            if (false) { // stack alloc error when Stmt.if_stmt{...} is used
+                for (statements) |stmt| std.debug.print("{}\n", .{stmt});
+            }
 
             var interpreter = try Interpreter.init(arena.allocator());
             try interpreter.interpret(statements, stdout_writer);
@@ -123,7 +133,13 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
         }
     }
 
-    if (false) std.debug.print("Encountered {0d} {1s} and {2d} {3s}.\n", .{ g_runtime_error_count, ErrorCode.runtime_error.toString(), g_error_count, ErrorCode.syntax_error.toString() });
+    if (false)
+        std.debug.print("Encountered {0d} {1s} and {2d} {3s}.\n", .{
+            g_runtime_error_count,
+            ErrorCode.runtime_error.toString(),
+            g_error_count,
+            ErrorCode.syntax_error.toString(),
+        });
 
     try bw.flush();
 
@@ -159,6 +175,11 @@ pub fn main() !void {
     const stdout_file = std.io.getStdOut().writer();
     const exit_code: u8 = try run(stdout_file, command, file_contents);
 
-    assert(exit_code == @intFromEnum(ErrorCode.no_error) or exit_code == @intFromEnum(ErrorCode.syntax_error) or exit_code == @intFromEnum(ErrorCode.runtime_error));
+    assert(
+        exit_code == @intFromEnum(ErrorCode.no_error) //
+        or exit_code == @intFromEnum(ErrorCode.syntax_error) //
+        or exit_code == @intFromEnum(ErrorCode.runtime_error), //
+    );
+
     std.process.exit(exit_code);
 }

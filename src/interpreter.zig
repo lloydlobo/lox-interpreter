@@ -44,53 +44,53 @@ pub const Interpreter = struct {
                 std.debug.print("IoError: {any}.", .{err});
                 @panic("IoError");
             },
+
             // Environment.Error
             error.VariableNotDeclared => runtimeError(undeclared_token, "Undefined variable '{s}'.", .{undeclared_token.lexeme}),
+
             // Allocator.Error
             else => |other| other,
         };
     }
 
     pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!void {
-        for (stmts) |stmt| {
-            _ = self.execute(stmt, writer) catch |err| return handleRuntimeError(err);
+        for (stmts) |*stmt| {
+            _ = self.execute(stmt, writer) catch |err|
+                return handleRuntimeError(err);
         }
     }
 
     pub fn interpretExpression(self: *Self, expr: *Expr, writer: anytype) Allocator.Error!void {
         const value = self.evaluate(expr) catch |err| return handleRuntimeError(err);
-        defer switch (value) {
-            .str => |x| self.allocator.free(x),
-            else => {},
-        };
-
         printValue(writer, value);
     }
 
-    fn execute(self: *Self, stmt: Stmt, writer: anytype) Error!Expr.Value {
-        switch (stmt) {
-            .expr => |x| {
-                _ = try self.evaluate(x);
-            },
-            .@"var" => |x| {
-                const value: Expr.Value = if (x.initializer) |expr| try self.evaluate(expr) else .{ .nil = {} };
-                try self.environment.define(x.name.lexeme, value);
-            },
-            .print => |x| {
-                const value = try self.evaluate(x);
-                printValue(writer, value);
-                writer.writeByte('\n') catch return error.IoError; // multi-line
-            },
-
+    fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Expr.Value {
+        switch (stmt.*) {
             .block => |statements| {
                 const previous = self.environment;
                 defer self.environment = previous; // finally { ... }
-
                 var environment = Environment.initEnclosing(previous, self.allocator); // try { ... }
                 self.environment = &environment;
-
-                for (statements) |statement|
+                for (statements) |*statement|
                     _ = try self.execute(statement, writer);
+            },
+            .if_stmt => |if_stmt| {
+                _ = if (isTruthy(try self.evaluate(if_stmt.condition)))
+                    try self.execute(if_stmt.then_branch, writer)
+                else if (if_stmt.else_branch) |eb|
+                    try self.execute(eb, writer);
+            },
+            .var_stmt => |var_stmt| {
+                const value: Expr.Value = if (var_stmt.initializer) |expr| try self.evaluate(expr) else .{ .nil = {} };
+                try self.environment.define(var_stmt.name.lexeme, value);
+            },
+            .print => |expr| {
+                printValue(writer, try self.evaluate(expr));
+                writer.writeByte('\n') catch return error.IoError; // multi-line
+            },
+            .expr => |expr| {
+                _ = try self.evaluate(expr);
             },
         }
 
@@ -115,7 +115,7 @@ pub const Interpreter = struct {
                 };
             },
             .assign => |assign| blk: {
-                // Similar to variable declarations in `execute() => .@"var"`:
+                // Similar to variable declarations in `execute() => .var_stmt`:
                 // Recursively evaluate "rhs" to get the value, then store it
                 // in a named variable, via `assign()` instead of `define()`.
                 // Key change: assignment not allowed to create a new variable.
@@ -168,7 +168,11 @@ pub const Interpreter = struct {
     }
 
     /// Matches operator type with kind and returns its type.
-    fn checkOperand(operator: Token, operand: Expr.Value, comptime kind: std.meta.FieldEnum(Expr.Value)) ?std.meta.fieldInfo(Expr.Value, kind).type {
+    fn checkOperand(
+        operator: Token,
+        operand: Expr.Value,
+        comptime kind: std.meta.FieldEnum(Expr.Value),
+    ) ?std.meta.fieldInfo(Expr.Value, kind).type {
         return switch (operand) {
             kind => |x| x,
             else => {
@@ -178,7 +182,12 @@ pub const Interpreter = struct {
         };
     }
 
-    fn checkOperands(operator: Token, left: Expr.Value, right: Expr.Value, comptime kind: std.meta.FieldEnum(Expr.Value)) ?struct {
+    fn checkOperands(
+        operator: Token,
+        left: Expr.Value,
+        right: Expr.Value,
+        comptime kind: std.meta.FieldEnum(Expr.Value),
+    ) ?struct {
         l: std.meta.fieldInfo(Expr.Value, kind).type,
         r: std.meta.fieldInfo(Expr.Value, kind).type,
     } {

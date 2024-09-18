@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const Expr = @import("expr.zig").Expr;
+const Stmt = @import("stmt.zig").Stmt;
 
 pub const AstPrinter = struct {
     pub fn print(writer: anytype, expr: *Expr) anyerror!void {
@@ -25,4 +26,24 @@ pub const AstPrinter = struct {
 
         try writer.writeByte(')');
     }
+
+    // STUB
+    // pub fn printStmt(writer: anytype, stmt: *Stmt) anyerror!void {
+    //     switch (stmt.*) {
+    //         .expr, .print => |x| try AstPrinter.print(writer, x),
+    //         .if_stmt => |x| {
+    //             try AstPrinter.print(writer, x.condition);
+    //             try AstPrinter.printStmt(writer, x.then_branch);
+    //             if (x.else_branch) |eb| {
+    //                 try AstPrinter.printStmt(writer, eb);
+    //             }
+    //         },
+    //         .block => |statements| {
+    //             for (statements) |*x| {
+    //                 try AstPrinter.printStmt(writer, x);
+    //             }
+    //         },
+    //         else => |_| {},
+    //     }
+    // }
 };
