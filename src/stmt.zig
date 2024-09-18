@@ -9,24 +9,56 @@ const Token = @import("token.zig").Token;
 
 pub const Stmt = union(enum) {
     block: []Stmt,
-    if_stmt: IfStmt,
-    var_stmt: VarStmt,
-    print: *Expr,
     expr: *Expr,
+    if_stmt: If,
+    print: *Expr,
+    var_stmt: Var,
 
-    pub const IfStmt = struct {
+    pub const If = struct {
         condition: *Expr,
         then_branch: *Stmt,
         else_branch: ?*Stmt,
-
+        // since else clauses are optional, and there is no explicit
+        // delimiter marking the end of the if statement, the grammar
+        // is ambiguous when you nest ifs in this way ─ This classic
+        // syntax pitfall is the dangling else problem.
+        // Solution: " `else` is bound to the nearest `if` that precedes it. "
         // see also https://craftinginterpreters.com/appendix-ii.html#if-statement
     };
 
-    pub const VarStmt = struct {
+    pub const Var = struct {
         name: Token,
         initializer: ?*Expr,
     };
 };
+
+// See https://craftinginterpreters.com/appendix-ii.html#statements
+// A2.2 Statements
+//
+// Statements form a second hierarchy of syntax tree nodes independent of
+// expressions. We add the first couple of them in “Statements and State”.
+//
+// package com.craftinginterpreters.lox;
+//
+// import java.util.List;
+//
+// abstract class Stmt {
+//   interface Visitor<R> {
+//     R visitBlockStmt(Block stmt);
+//     R visitClassStmt(Class stmt);
+//     R visitExpressionStmt(Expression stmt);
+//     R visitFunctionStmt(Function stmt);
+//     R visitIfStmt(If stmt);
+//     R visitPrintStmt(Print stmt);
+//     R visitReturnStmt(Return stmt);
+//     R visitVarStmt(Var stmt);
+//     R visitWhileStmt(While stmt);
+//   }
+//
+//   // Nested Stmt classes here...
+//
+//   abstract <R> R accept(Visitor<R> visitor);
+// }
 
 // pub fn format(
 //     self: IfStmt,

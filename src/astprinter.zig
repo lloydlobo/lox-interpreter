@@ -12,6 +12,8 @@ pub const AstPrinter = struct {
             .grouping => |grouping| parenthesize(writer, "group", .{grouping}), //since lox uses `group` while printing
             .assign => {},
             .variable => {},
+
+            else => @panic("Unimplemented"),
         };
     }
 

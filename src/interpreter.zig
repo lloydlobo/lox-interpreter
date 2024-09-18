@@ -97,23 +97,10 @@ pub const Interpreter = struct {
         return .{ .nil = {} };
     }
 
-    /// Does a **post-order traversal**—each node evaluates its children before
-    /// doing its own work.
+    /// Visit methods do a **post-order traversal**—each node evaluates its
+    /// children before doing its own work.
     fn evaluate(self: *Self, expr: *Expr) Error!Expr.Value {
         return switch (expr.*) {
-            .literal => |literal| switch (literal) {
-                .str => |str| .{ .str = try self.allocator.dupe(u8, str) },
-                else => literal,
-            },
-            .unary => |unary| try self.visitUnary(unary),
-            .binary => |binary| try self.visitBinary(binary),
-            .grouping => |group| try self.evaluate(group),
-            .variable => |variable| blk: {
-                break :blk self.environment.get(variable) catch |err| {
-                    undeclared_token = variable;
-                    break :blk err;
-                };
-            },
             .assign => |assign| blk: {
                 // Similar to variable declarations in `execute() => .var_stmt`:
                 // Recursively evaluate "rhs" to get the value, then store it
@@ -126,24 +113,29 @@ pub const Interpreter = struct {
                 };
                 break :blk value;
             },
+            .binary => |binary| try self.visitBinaryExpr(binary),
+            .grouping => |group| try self.evaluate(group),
+            .literal => |literal| switch (literal) {
+                .str => |str| .{ .str = try self.allocator.dupe(u8, str) },
+                else => literal,
+            },
+            .logical => |logical| try self.visitLogicalExpr(logical),
+            .unary => |unary| try self.visitUnaryExpr(unary),
+            .variable => |variable| blk: {
+                break :blk self.environment.get(variable) catch |err| {
+                    undeclared_token = variable;
+                    break :blk err;
+                };
+            },
+            // else => @panic("Unimplemented"),
         };
     }
 
-    fn visitUnary(self: *Self, expr: Expr.Unary) Error!Expr.Value {
-        const op = expr.operator;
-        const r = try self.evaluate(expr.right);
-
-        return switch (op.type) {
-            .minus => .{ .num = -(checkOperand(op, r, .num) orelse return error.OperandNotNumber) },
-            .bang => .{ .bool = !isTruthy(r) },
-            else => unreachable,
-        };
-    }
-
-    fn visitBinary(self: *Self, expr: Expr.Binary) Error!Expr.Value {
+    fn visitBinaryExpr(self: *Self, expr: Expr.Binary) Error!Expr.Value {
         // see also https://craftinginterpreters.com/evaluating-expressions.html#evaluating-binary-operators
         const l = try self.evaluate(expr.left);
         const r = try self.evaluate(expr.right);
+
         const opsn = checkOperands(expr.operator, l, r, .num);
 
         return switch (expr.operator.type) {
@@ -154,8 +146,6 @@ pub const Interpreter = struct {
             .less => if (opsn) |o| .{ .bool = o.l < o.r } else error.OperandsNotNumbers,
             .less_equal => if (opsn) |o| .{ .bool = o.l <= o.r } else error.OperandsNotNumbers,
             .minus => if (opsn) |o| .{ .num = o.l - o.r } else error.OperandsNotNumbers,
-            .slash => if (opsn) |o| .{ .num = o.l / o.r } else error.OperandsNotNumbers,
-            .star => if (opsn) |o| .{ .num = o.l * o.r } else error.OperandsNotNumbers,
             .plus => blk: {
                 break :blk (if (checkOperands(expr.operator, l, r, .num)) |o| .{
                     .num = o.l + o.r,
@@ -163,6 +153,30 @@ pub const Interpreter = struct {
                     .str = try mem.concat(self.allocator, u8, &[_][]const u8{ o.l, o.r }),
                 } else error.OperandsNeitherNumbersNorStrings);
             },
+            .slash => if (opsn) |o| .{ .num = o.l / o.r } else error.OperandsNotNumbers,
+            .star => if (opsn) |o| .{ .num = o.l * o.r } else error.OperandsNotNumbers,
+            else => unreachable,
+        };
+    }
+
+    fn visitLogicalExpr(self: *Self, expr: Expr.Logical) Error!Expr.Value {
+        const l = try self.evaluate(expr.left);
+
+        if (expr.operator.type == .@"or") {
+            if (isTruthy(l)) return l;
+        } else {
+            if (!isTruthy(l)) return l;
+        }
+
+        return try self.evaluate(expr.right);
+    }
+
+    fn visitUnaryExpr(self: *Self, expr: Expr.Unary) Error!Expr.Value {
+        const r = try self.evaluate(expr.right);
+
+        return switch (expr.operator.type) {
+            .minus => .{ .num = -(checkOperand(expr.operator, r, .num) orelse return error.OperandNotNumber) },
+            .bang => .{ .bool = !isTruthy(r) },
             else => unreachable,
         };
     }

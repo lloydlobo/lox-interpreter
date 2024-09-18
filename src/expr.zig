@@ -4,16 +4,19 @@ const Token = @import("token.zig").Token;
 const formatNumber = @import("root.zig").formatNumber;
 
 pub const Expr = union(enum) {
-    /// → NUMBER | STRING | "true" | "false" | "nil" ;
-    literal: Value,
-    /// → ( "-" | "!" ) expression ;
-    unary: Unary,
+    /// ?
+    assign: Assign,
     /// → expression operator expression ;
     binary: Binary,
     /// → "(" expression ")" ;
     grouping: *Expr,
-    /// ?
-    assign: Assign,
+    /// → NUMBER | STRING | "true" | "false" | "nil" ;
+    literal: Value,
+    /// logic_or       → logic_and ( "or" logic_and )* ;
+    /// logic_and      → equality ( "and" equality )* ;
+    logical: Logical,
+    /// → ( "-" | "!" ) expression ;
+    unary: Unary,
     /// ?
     variable: Token,
 
@@ -25,6 +28,13 @@ pub const Expr = union(enum) {
     pub const Binary = struct {
         left: *Expr,
         /// → "==" | "!=" | "<" | "<=" | ">" | ">=" | "+"  | "-"  | "*" | "/" ;
+        operator: Token,
+        right: *Expr,
+    };
+
+    // We could reuse the existing Expr.Binary class for these two new expressions since they have the same fields. But then visitBinaryExpr() would have to check to see if the operator is one of the logical operators and use a different code path to handle the short circuiting. I think it’s cleaner to define a new class for these operators so that they get their own visit method.
+    pub const Logical = struct {
+        left: *Expr,
         operator: Token,
         right: *Expr,
     };
@@ -50,3 +60,36 @@ pub const Expr = union(enum) {
         }
     };
 };
+
+// See https://craftinginterpreters.com/appendix-ii.html#expressions
+// A2.1 Expressions
+//
+// Expressions are the first syntax tree nodes we see, introduced in
+// “Representing Code”. The main Expr class defines the visitor interface used
+// to dispatch against the specific expression types, and contains the other
+// expression subclasses as nested classes.
+//
+// package com.craftinginterpreters.lox;
+//
+// import java.util.List;
+//
+// abstract class Expr {
+//   interface Visitor<R> {
+//     R visitAssignExpr(Assign expr);
+//     R visitBinaryExpr(Binary expr);
+//     R visitCallExpr(Call expr);
+//     R visitGetExpr(Get expr);
+//     R visitGroupingExpr(Grouping expr);
+//     R visitLiteralExpr(Literal expr);
+//     R visitLogicalExpr(Logical expr);
+//     R visitSetExpr(Set expr);
+//     R visitSuperExpr(Super expr);
+//     R visitThisExpr(This expr);
+//     R visitUnaryExpr(Unary expr);
+//     R visitVariableExpr(Variable expr);
+//   }
+//
+//   // Nested Expr classes here...
+//
+//   abstract <R> R accept(Visitor<R> visitor);
+// }

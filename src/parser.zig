@@ -8,7 +8,7 @@ const AstPrinter = @import("astprinter.zig").AstPrinter;
 const Expr = @import("expr.zig").Expr;
 const Scanner = @import("scanner.zig").Scanner;
 const Stmt = @import("stmt.zig").Stmt;
-const IfStmt = Stmt.IfStmt;
+const If = Stmt.If;
 const Token = @import("token.zig").Token;
 const tokenError = @import("main.zig").tokenError;
 
@@ -72,10 +72,7 @@ pub const Parser = struct {
     }
 
     fn declaration(self: *Parser) Allocator.Error!?Stmt {
-        const stmt_result = if (self.match(.{.@"var"}))
-            self.varDeclaration()
-        else
-            self.statement();
+        const stmt_result = if (self.match(.{.@"var"})) self.varDeclaration() else self.statement();
 
         return (stmt_result) catch |err| switch (err) {
             error.ParseError => blk: {
@@ -116,7 +113,7 @@ pub const Parser = struct {
         const condition: *Expr = try self.expression();
         _ = try self.consume(.right_paren, "Expect ')' after if condition.");
 
-        return (try self.createStmt(.{ .if_stmt = IfStmt{
+        return (try self.createStmt(.{ .if_stmt = If{
             .condition = condition,
             .then_branch = try self.createStmt(try self.statement()),
             .else_branch = if (self.match(.{.@"else"})) try self.createStmt(try self.statement()) else null,
@@ -124,8 +121,9 @@ pub const Parser = struct {
     }
 
     fn printStatement(self: *Parser) Error!Stmt {
-        const value: *Expr = try self.expression(); //> .{.Literal.Value}
-        _ = try self.consume(.semicolon, "Expect ';' after value."); // responsible for setting error flags if any parse errors
+        const value: *Expr = try self.expression(); // literal value
+        // responsible for setting error flags if any parse errors
+        _ = try self.consume(.semicolon, "Expect ';' after value.");
 
         return .{ .print = value };
     }
@@ -157,7 +155,9 @@ pub const Parser = struct {
     // Enhances single token of lookahead similar to binary operators like `+`.
     fn assignment(self: *Parser) Error!*Expr {
         // Parse "lhs", which can be any expression of higher precedence.
-        const expr: *Expr = try self.equality();
+        // previously:
+        //     try self.equality();
+        const expr: *Expr = try self.orExpr();
 
         // When we find an `=`, we parse right-hand side, and then wrap it all
         // up in an assignment expression tree node. Since assignment is
@@ -181,6 +181,33 @@ pub const Parser = struct {
                 // `(a) = 3;`  // Error.
                 else => parseError(equals, "Invalid assignment target."),
             };
+        }
+
+        return expr;
+    }
+
+    /// Calls andExpr() (next higher precedence level) for its operands.
+    /// Parsing a series of `or` expressions mirrors other binary operators.
+    fn orExpr(self: *Parser) Error!*Expr {
+        var expr: *Expr = try self.andExpr();
+
+        while (self.match(.{.@"or"})) {
+            const operator = self.previous();
+            const right = try self.andExpr();
+            expr = try self.createExpr(.{ .logical = .{ .left = expr, .operator = operator, .right = right } });
+        }
+
+        return expr;
+    }
+
+    /// Calls equality() for its operands.
+    fn andExpr(self: *Parser) Error!*Expr {
+        var expr: *Expr = try self.equality();
+
+        while (self.match(.{.@"and"})) {
+            const operator = self.previous();
+            const right = try self.equality();
+            expr = try self.createExpr(.{ .logical = .{ .left = expr, .operator = operator, .right = right } });
         }
 
         return expr;
