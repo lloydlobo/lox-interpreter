@@ -67,6 +67,7 @@ pub const Token: type = struct {
         // Keywords
 
         @"and",
+        @"break",
         class,
         @"else",
         false,

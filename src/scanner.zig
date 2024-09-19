@@ -20,6 +20,7 @@ pub const Scanner = struct {
 
     pub const keywords = std.StaticStringMap(Token.Type).initComptime(.{
         .{ "and", .@"and" },
+        .{ "break", .@"break" },
         .{ "class", .class },
         .{ "else", .@"else" },
         .{ "false", .false },

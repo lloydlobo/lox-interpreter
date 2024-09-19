@@ -8,6 +8,7 @@ const Expr = @import("expr.zig").Expr;
 const Token = @import("token.zig").Token;
 
 /// statement        → expr
+///                  | break_stmt
 ///                  | for_stmt
 ///                  | if_stmt
 ///                  | print
@@ -15,9 +16,9 @@ const Token = @import("token.zig").Token;
 ///                  | while_stmt
 ///                  | block ;
 pub const Stmt = union(enum) {
+    break_stmt: ?*Expr,
     expr: *Expr,
-    /// → "if" "(" expression ")" statement ( "else" statement )? ;
-    if_stmt: If,
+    if_stmt: If, // → "if" "(" expression ")" statement ( "else" statement )? ;
     print: *Expr,
     var_stmt: Var,
     while_stmt: While,

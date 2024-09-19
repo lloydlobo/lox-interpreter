@@ -67,10 +67,26 @@ pub const Interpreter = struct {
 
     fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Expr.Value {
         switch (stmt.*) {
+            .break_stmt => |break_stmt| {
+                // TODO: The syntax is a break keyword followed by a semicolon. It should
+                // be a syntax error to have a break statement appear outside of any
+                // enclosing loop.
+
+                const previous = self.environment;
+                defer self.environment = previous;
+
+                // MAY CAUSE INFINITE LOOPS
+                var environment: Environment = previous.initEnclosing();
+                self.environment = &environment;
+
+                if (break_stmt) |label| std.debug.print("[debug] break_stmt: {any}\n", .{label});
+
+                @panic("Unimplemented");
+            },
             .block => |statements| {
                 const previous = self.environment;
                 defer self.environment = previous; // finally { ... }
-                var environment = Environment.initEnclosing(previous, self.allocator); // try { ... }
+                var environment = previous.initEnclosing(); // try { ... }
                 self.environment = &environment;
                 for (statements) |*statement|
                     _ = try self.execute(statement, writer);
