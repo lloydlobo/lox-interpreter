@@ -7,14 +7,24 @@ const FormatOptions = fmt.FormatOptions;
 const Expr = @import("expr.zig").Expr;
 const Token = @import("token.zig").Token;
 
+/// statement        → expr
+///                  | for_stmt
+///                  | if_stmt
+///                  | print
+///                  | var_stmt
+///                  | while_stmt
+///                  | block ;
 pub const Stmt = union(enum) {
-    block: []Stmt,
     expr: *Expr,
+    /// → "if" "(" expression ")" statement ( "else" statement )? ;
     if_stmt: If,
     print: *Expr,
     var_stmt: Var,
     while_stmt: While,
+    block: []Stmt,
 
+    /// "If         : Expr condition, Stmt thenBranch," + " Stmt elseBranch",
+    ///
     // since else clauses are optional, and there is no explicit delimiter
     // marking the end of the if statement, the grammar is ambiguous when you
     // nest ifs in this way ─ This classic syntax pitfall is the [dangling else
@@ -39,6 +49,7 @@ pub const Stmt = union(enum) {
 };
 
 // See https://craftinginterpreters.com/appendix-ii.html#statements
+//
 // A2.2 Statements
 //
 // Statements form a second hierarchy of syntax tree nodes independent of
@@ -65,50 +76,35 @@ pub const Stmt = union(enum) {
 //
 //   abstract <R> R accept(Visitor<R> visitor);
 // }
-
-// pub fn format(
-//     self: IfStmt,
-//     comptime _: []const u8,
-//     _: FormatOptions,
-//     writer: anytype,
-// ) !void {
-//     try std.fmt.format(writer, "if |> condition |> {}\n", .{self.condition});
-//     const tb = self.then_branch.*;
-//     try std.fmt.format(writer, "then |> {}\n", .{tb});
-//     if (self.else_branch) |else_branch| {
-//         const eb = else_branch.*;
-//         try std.fmt.format(writer, "else |> {}\n", .{eb});
-//     }
-// }
-
-// pub fn format(
-//     self: VarStmt,
-//     comptime _: []const u8,
-//     _: FormatOptions,
-//     writer: anytype,
-// ) !void {
-//     try std.fmt.format(writer, "{}", .{self.name});
-//     if (self.initializer) |init|
-//         try std.fmt.format(writer, "{}", .{init});
-// }
-// pub fn format(
-//     self: Stmt,
-//     comptime _: []const u8,
-//     _: FormatOptions,
-//     writer: anytype,
-// ) !void {
-//     switch (self) {
-//         .block => |statements| {
-//             try std.fmt.format(writer, "`block:` {{\n", .{});
-//             for (statements) |stmt| try std.fmt.format(writer, "{}\n", .{stmt});
-//             try std.fmt.format(writer, "}}", .{});
-//         },
-//         .if_stmt => |if_stmt| try std.fmt.format(writer, "{}", .{if_stmt}),
-//         .var_stmt => |var_stmt| try std.fmt.format(writer, "{}", .{var_stmt}),
-//         .print => |expr| try std.fmt.format(writer, "`print:` {{ {} }}", .{expr}),
-//         .expr => |expr| try std.fmt.format(writer, "{}", .{expr}),
-//     }
-// }
 //
-
-// Wed Sep 18 03:58:09 PM IST 2024
+// See https://craftinginterpreters.com/control-flow.html
+//
+// # Control Flow
+//
+// The process of proving that the answer to the first two questions is “no”,
+// Alan Turing and Alonzo Church devised a precise answer to the last
+// question—a definition of what kinds of functions are computable. They each
+// crafted a tiny system with a minimum set of machinery that is still powerful
+// enough to compute any of a (very) large class of functions.
+//
+// They proved the answer to the first question is “no” by showing that the
+// function that returns the truth value of a given statement is not a
+// computable one.
+//
+// These are now considered the “computable functions”. Turing’s system is
+// called a Turing machine. Church’s is the lambda calculus. Both are still
+// widely used as the basis for models of computation and, in fact, many modern
+// functional programming languages use the lambda calculus at their core.
+//
+// We can divide control flow roughly into two kinds:
+//
+// 1. Conditional or branching control flow is used to not execute some piece
+// of code. Imperatively, think of it as jumping ahead over a region of code.
+//
+// 2. Looping control flow executes a chunk of code more than once. It jumps
+// back so that you can do something again. Since you don’t usually want
+// infinite loops, it typically has some conditional logic to know when to stop
+// looping as well.
+//
+// The conditional operator is also called the “ternary” operator because it’s
+// the only operator in C that takes three operands.

@@ -86,11 +86,63 @@ pub const Parser = struct {
     // assume it must be an expression statement. final fallthrough case, since
     // it’s hard to proactively recognize an expression from its first token.
     fn statement(self: *Parser) Error!Stmt {
+        if (self.match(.{.@"for"})) return self.forStatement();
         if (self.match(.{.@"if"})) return self.ifStatement();
         if (self.match(.{.print})) return self.printStatement();
         if (self.match(.{.@"while"})) return self.whileStatement();
         if (self.match(.{.left_brace})) return .{ .block = (try self.block()) };
-        return self.expressionStatement();
+        return self.exprStatement();
+    }
+
+    // forStmt        → "for" "(" ( varDecl | exprStmt | ";" ) expression? ";" expression? ")" statement ;
+    //
+    // None of it does anything you couldn’t do with the statements we already
+    // have. If for loops didn’t support initializer clauses, you could just
+    // put the initializer expression before the for statement. Without an
+    // increment clause, we could simply put the increment expression at the
+    // end of the body ourself.
+    fn forStatement(self: *Parser) Error!Stmt {
+        _ = try self.consume(.left_paren, "Expect '(' after 'for'.");
+
+        // Clause 1
+        const initializer: ?Stmt = blk: {
+            break :blk if (self.match(.{.semicolon}))
+                null
+            else if (self.match(.{.@"var"}))
+                try self.varDeclaration()
+            else
+                try self.exprStatement();
+        };
+
+        // Clause 2
+        var condition: ?*Expr = if (!self.check(.semicolon)) try self.expression() else null;
+        _ = try self.consume(.semicolon, "Expect ';' after loop condition.");
+
+        // Clause 3
+        const increment: ?*Expr = if (!self.check(.right_paren)) try self.expression() else null;
+        _ = try self.consume(.right_paren, "Expect ')' after for clauses.");
+
+        // Code is a little simpler if we work backward,
+        var body: *Stmt = try self.createStmt(try self.statement());
+
+        if (increment) |expr| {
+            var list = std.ArrayList(Stmt).init(self.allocator);
+            errdefer list.deinit(); // deinitialize with `deinit` or use `toOwnedSlice`.
+            try list.appendSlice(&[_]Stmt{ body.*, .{ .expr = expr } });
+            body = try self.createStmt(.{ .block = try list.toOwnedSlice() });
+        }
+
+        if (condition == null) condition = try self.createExpr(.{ .literal = .{ .bool = true } });
+        body = try self.createStmt(.{ .while_stmt = .{ .condition = condition.?, .body = try self.createStmt(body.*) } });
+
+        if (initializer) |stmt| {
+            var list = std.ArrayList(Stmt).init(self.allocator);
+            errdefer list.deinit(); // deinitialize with `deinit` or use `toOwnedSlice`.
+            try list.appendSlice(&[_]Stmt{ stmt, body.* });
+            body = try self.createStmt(.{ .block = try list.toOwnedSlice() });
+        }
+
+        return body.*;
     }
 
     /// Requires and consumes an identifier token for the variable name; and handles either assignment or no assignment.
@@ -141,7 +193,7 @@ pub const Parser = struct {
         return .{ .print = value };
     }
 
-    fn expressionStatement(self: *Parser) Error!Stmt {
+    fn exprStatement(self: *Parser) Error!Stmt {
         const value: *Expr = try self.expression(); //> (*Expr) union(enum)
         _ = try self.consume(.semicolon, "Expect ';' after expression.");
 
