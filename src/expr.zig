@@ -67,6 +67,7 @@ pub const Expr = union(enum) {
     pub const Value = union(enum) { // UnionValue
         bool: bool,
         callable: *LoxCallable,
+        function: *LoxFunction,
         nil: void,
         num: f64,
         obj: *Obj,
@@ -94,13 +95,25 @@ pub const Expr = union(enum) {
                 return self.toStringFn();
             }
         };
-        // pub fn LoxCallable(comptime T: type) type {
-        //     return struct {
-        //         arity: fn () u32,
-        //         call: fn (self: *T, arguments: []const T) anyerror!T,
-        //         toString: fn () []const u8,
-        //     };
-        // }
+
+        pub const LoxFunction = struct {
+            arityFn: *const fn (*anyopaque) usize,
+            callFn: *const fn (*anyopaque, *Interpreter, []Value) Value,
+            toStringFn: *const fn (*anyopaque) []const u8,
+            context: *anyopaque, // Context pointer to hold function-specific data
+
+            pub fn arity(self: *LoxFunction) usize {
+                return self.arityFn(self.context);
+            }
+
+            pub fn call(self: *LoxFunction, interpreter: *Interpreter, arguments: []Value) Value {
+                return self.callFn(self.context, interpreter, arguments);
+            }
+
+            pub fn toString(self: *LoxFunction) []const u8 {
+                return self.toStringFn(self.context);
+            }
+        };
 
         // See https://github.com/raulgrell/zox/blob/master/src/value.zig#L46
         // See https://github.com/raulgrell/zox/blob/master/src/value.zig#L250
@@ -131,6 +144,7 @@ pub const Expr = union(enum) {
                 // .obj => |obj| try std.fmt.format(writer, "{}", .{obj}),
                 .obj => |obj| try obj.print(writer),
                 .callable => |val| try std.fmt.format(writer, "{any}", .{val}),
+                .function => |val| try std.fmt.format(writer, "{any}", .{val}),
                 .str => |val| try std.fmt.format(writer, "{s}", .{val}),
             }
         }
@@ -176,4 +190,21 @@ pub const EitherValue = if (NAN_BOXING) Expr.NanBoxedValue else Expr.Value;
 //   // Nested Expr classes here...
 //
 //   abstract <R> R accept(Visitor<R> visitor);
+// }
+//
+
+// const NativeFn = *const fn (arg_count: u8, args: [*]Value, ctx: anytype) Interpreter.Error!Value;
+//
+// const NativeFunctionCtx = struct {
+//     name: []const u8,
+//     arity: usize,
+//     fnPointer: *const fn () f64,
+// };
+
+// pub fn LoxCallable(comptime T: type) type {
+//     return struct {
+//         arity: fn () u32,
+//         call: fn (self: *T, arguments: []const T) anyerror!T,
+//         toString: fn () []const u8,
+//     };
 // }

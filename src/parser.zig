@@ -533,18 +533,16 @@ pub const Parser = struct {
     fn fnDeclaration(self: *Parser, comptime kind: []const u8) Error!Stmt {
         const name: Token = try self.consume(.identifier, "Expect " ++ kind ++ " name.");
         _ = try self.consume(.left_paren, "Expect '(' after " ++ kind ++ " name.");
+
         var parameters = std.ArrayList(Token).init(self.allocator);
         errdefer parameters.deinit();
 
         if (!self.check(.right_paren)) {
-            while (true) {
-                if (parameters.items.len >= 255)
-                    return parseError(self.peek(), "Can't have more than 255 parameters.");
-
+            var do = true;
+            while (do or self.match(.{.comma})) {
+                do = false;
+                if (parameters.items.len >= 255) return parseError(self.peek(), "Can't have more than 255 parameters.");
                 try parameters.append(try self.consume(.identifier, "Expect parameter name."));
-
-                if (!self.match(.{.comma}))
-                    break;
             }
         }
         _ = try self.consume(.right_paren, "Expect ')' after parameters.");
@@ -558,10 +556,10 @@ pub const Parser = struct {
             .parameters = try parameters.toOwnedSlice(),
             .body = body,
         };
-        defer std.debug.print("hi\n", .{});
 
-        // return fun.*; // TODO: Figure out proper return type signature
-        return (try self.createStmt(.{ .function = fun.* })).*;
+        defer std.log.debug("in fnDeclaration: name: {any} \nbody: {{ {any} }}", .{ fun.*, fun.*.body });
+
+        return .{ .function = fun.* };
     }
 
     // See https://github.com/jwmerrill/zig-lox/blob/main/src/compiler.zig#L326

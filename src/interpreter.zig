@@ -3,10 +3,11 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 const assert = std.debug.assert;
 
-// const callable = @import("callable.zig");
+const debug = @import("debug.zig");
 const Environment = @import("environment.zig").Environment;
 const Expr = @import("expr.zig").Expr;
 const Value = Expr.Value;
+const LoxCallable = Expr.Value.LoxCallable;
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig").Token;
 
@@ -19,6 +20,11 @@ pub const Interpreter = struct {
     globals: *Environment,
     /// Tracks current frame and changes as we enter and exit local scopes.
     environment: *Environment,
+
+    // TODO: add stdout and stderr writer fields to Interpreter and/or
+    // Environment, to aid with LoxFunction that implements LoxCallable
+    // out_writer: anytype,
+    // err_writer: anytype,
 
     const Self = @This();
 
@@ -43,30 +49,9 @@ pub const Interpreter = struct {
         };
 
         const clock_callable = try self.allocator.create(Value.LoxCallable);
-        clock_callable.* = .{
-            .arityFn = struct {
-                fn arity() usize {
-                    return 0;
-                }
-            }.arity,
-            .callFn = struct {
-                fn call(_: *Interpreter, _: []Value) Value {
-                    const now: f64 = @floatFromInt(std.time.milliTimestamp());
-                    const elapsed: f64 = now / 1000.0;
-                    return .{ .num = elapsed };
-                }
-            }.call,
-            .toStringFn = struct {
-                fn toString() []const u8 {
-                    return "<native fn>";
-                }
-            }.toString,
-        };
-
-        self.globals.define("clock", .{ .callable = clock_callable }) catch |err| {
+        clock_callable.* = clockGlobalCallable;
+        self.globals.define("clock", .{ .callable = clock_callable }) catch |err|
             try handleRuntimeError(err);
-            return error.OutOfMemory;
-        };
 
         return self;
     }
@@ -80,36 +65,41 @@ pub const Interpreter = struct {
                 std.debug.print("IoError: {any}.", .{err});
                 @panic("IoError");
             },
-
             error.VariableNotDeclared => runtimeError(undeclared_token, "Undefined variable '{s}'.", .{undeclared_token.lexeme}),
-
-            error.WrongArity, error.NotCallable => @panic("Unimplemented"),
-
+            error.WrongArity => runtimeError(undeclared_token, "Wrong function arguments arity '{s}'.", .{undeclared_token.lexeme}),
+            error.NotCallable => runtimeError(undeclared_token, "Value not callable '{s}'.", .{undeclared_token.lexeme}),
             else => |other| other,
         };
     }
 
     fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Expr.Value {
         switch (stmt.*) {
+            //
             // this should not be here, since we are evaluating function
             // defininon, while execute should work only when called, unless the
             // xpreession that is being called is this
+            //
             .function => |fun| {
-                { // STUB
-                    const found_func_call = false;
-                    if (found_func_call) {
-                        std.debug.print("fun {s}({any}) {{\n", .{ fun.name.lexeme, fun.parameters });
-                        for (fun.body) |body| std.debug.print("\t{}\n", .{body});
-                        std.debug.print("}}\n", .{});
+                std.log.debug("execute -> {any}, {}", .{ fun, @TypeOf(fun) });
 
-                        for (fun.body) |*body| {
-                            _ = try self.execute(body, writer);
-                        }
-                    } else {
-                        std.debug.print("Function needs to be called with `()`\n", .{});
-                    }
-                }
+                // if (false) { // STUB
+                //     const found_func_call = false;
+                //     if (found_func_call) {
+                //         std.debug.print("fun {s}({any}) {{\n", .{ fun.name.lexeme, fun.parameters });
+                //         for (fun.body) |body| std.debug.print("\t{}\n", .{body});
+                //         std.debug.print("}}\n", .{});
+                //         for (fun.body) |*body| { _ = try self.execute(body, writer); }
+                //     } else {
+                //         std.debug.print("Function needs to be called with `()`\n", .{});
+                //     }
+                // }
 
+                // const function = try self.allocator.create(LoxCallable);
+                // errdefer self.allocator.destroy(function);
+                const res = try functionCallable(self.allocator, fun);
+                // function.* = res;
+
+                try self.environment.define(fun.name.lexeme, .{ .function = res });
                 // @panic("Unimplemented");
             },
             .break_stmt => |break_stmt| { // See https://craftinginterpreters.com/control-flow.html#challenges
@@ -261,6 +251,7 @@ pub const Interpreter = struct {
             .obj => |x| std.fmt.format(writer, "{any}", .{x}) catch {},
             .str => |x| std.fmt.format(writer, "{s}", .{x}) catch {},
             .callable => |x| std.fmt.format(writer, "{any}", .{x}) catch {},
+            .function => |x| std.fmt.format(writer, "{any}", .{x}) catch {},
         }
     }
 
@@ -281,33 +272,7 @@ pub const Interpreter = struct {
                 break :blk value;
             },
             .binary => |binary| try self.visitBinaryExpr(binary),
-            // .call => |call| {
-            //     // TODO: See https://craftinginterpreters.com/functions.html#interpreting-function-calls
-            //     // TODO: create loxcallable.zig or callable.zig
-            //     const argcount: usize = call.arguments.len;
-            //     // Identifier that looks up the function by its name, but it
-            //     // could be anything.
-            //     const callee: Value = try self.evaluate(call.callee);
-            //     // Evaluate and collect values from each of the argument
-            //     // expressions in order.
-            //     var arguments = std.ArrayList(Expr.Value).init(self.allocator);
-            //     errdefer arguments.deinit();
-            //     for (call.arguments) |argument| { try arguments.append(try self.evaluate(argument)); }
-            //     if (!callee.isObj()) runtimeError(call.paren, "Can only call functions anf classes.", .{});
-            //     // if (@TypeOf(callee) != callable.Callable) // "totally not a function"(); //     runtimeError(call.paren, "Can only call functions anf classes.", .{});
-            //     std.debug.print(".call => {any} {any} {any}\n", .{ call.paren.lexeme, callee.str, argcount, });
-            //     // const function: ?callable.Callable = null;
-            //     // const function = callable.Callable.init(callable.Function.init( //     self.allocator, //     callee.str, //     argcount, // ));
-            //     // Before invoking the callable, we check to see if the
-            //     // argument list’s length matches the callable’s arity.
-            //     // if (function) |func| {
-            //     //     if (argcount != func.arity()) { //         runtimeError(call.paren, "Expected {d} arguments but got {d}.", .{ func.arity(), argcount }); //     }
-            //     // }
-            //     // return function.call(argcount, try arguments.toOwnedSlice());
-            //     return callee;
-            // },
-            .call => |call| {
-                std.debug.print("in evaluate() switch case .call => |call| ... \n", .{});
+            .call => |call| blk: {
                 const callee = try self.evaluate(call.callee);
 
                 var arguments = std.ArrayList(Expr.Value).init(self.allocator);
@@ -317,19 +282,31 @@ pub const Interpreter = struct {
                     try arguments.append(try self.evaluate(argument));
                 }
 
+                std.log.debug("in evaluate() switch case .call => |call| ...", .{});
                 switch (callee) {
-                    .callable => |callable| {
+                    .function => |function| { //user fn
+                        std.log.debug("in evaluate() switch case .call => |call| .function", .{});
+                        std.log.debug("{any}", .{function.arity()});
+                        if (arguments.items.len != function.arity()) {
+                            runtime_token = call.paren;
+                            break :blk error.WrongArity;
+                        }
+                        break :blk function.call(self, arguments.items);
+                    },
+                    .callable => |callable| { //native fn
+                        std.log.debug("in evaluate() switch case .call => |call| .callable", .{});
                         if (arguments.items.len != callable.arity()) {
                             runtime_token = call.paren;
-                            return error.WrongArity;
+                            break :blk error.WrongArity;
                         }
-                        return callable.callFn(self, arguments.items);
+                        break :blk callable.callFn(self, arguments.items);
                     },
                     else => {
                         runtime_token = call.paren;
-                        return error.NotCallable;
+                        break :blk error.NotCallable;
                     },
                 }
+                unreachable;
             },
             .grouping => |group| try self.evaluate(group),
             .literal => |literal| switch (literal) {
@@ -339,6 +316,7 @@ pub const Interpreter = struct {
             .logical => |logical| try self.visitLogicalExpr(logical),
             .unary => |unary| try self.visitUnaryExpr(unary),
             .variable => |variable| blk: {
+                std.log.debug("in evaluate switch .variable => expecting `fun hello()` {any}", .{variable});
                 break :blk self.environment.get(variable) catch |err| {
                     undeclared_token = variable;
                     break :blk err;
@@ -354,13 +332,20 @@ pub const Interpreter = struct {
     }
 
     pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!void {
-        assert(self.environment.values.count() == 0);
-        if (self.globals.values.get("clock")) |clock| assert(mem.eql(u8, clock.callable.toString(), "<native fn>"));
-
+        if (comptime debug.is_trace_env) {
+            assert(self.environment.values.count() == 0);
+            if (self.globals.values.get("clock")) |value| {
+                const fun = value.callable;
+                assert(@TypeOf(fun) == *Value.LoxCallable);
+                assert((fun.arity() == 0) and mem.eql(u8, fun.toString(), "<native fn>"));
+                assert(@TypeOf(fun.call(self, &[_]Value{}).num) == f64);
+            }
+        }
         errdefer self.environment.values.clearAndFree();
         defer {
-            if (self.environment.values.count() != 0)
+            if (self.environment.values.count() != 0) {
                 self.environment.values.clearAndFree();
+            }
             assert(self.environment.values.count() == 0);
         }
 
@@ -370,3 +355,103 @@ pub const Interpreter = struct {
         }
     }
 };
+
+const clockGlobalCallable: Value.LoxCallable = .{
+    .arityFn = struct {
+        fn arity() usize {
+            return 0;
+        }
+    }.arity,
+    .callFn = struct {
+        fn call(_: *Interpreter, _: []Value) Value {
+            return .{ .num = (@as(f64, @floatFromInt(std.time.milliTimestamp())) / 1000.0) };
+        }
+    }.call,
+    .toStringFn = struct {
+        fn toString() []const u8 {
+            return "<native fn>";
+        }
+    }.toString,
+};
+
+fn arityFn(context: *anyopaque) usize {
+    // const declr: *const Stmt.Function = @alignCast(context);
+    const declaration = @as(*Stmt.Function, @alignCast(@ptrCast(context)));
+    std.log.debug("declr: {}", .{declaration});
+    // return 0;
+    return declaration.parameters.len;
+}
+
+fn callFn(context: *anyopaque, interpreter: *Interpreter, arguments: []Value) Value {
+    const declaration = @as(*Stmt.Function, @alignCast(@ptrCast(context)));
+    var environment = Environment.initEnclosing(interpreter.environment, interpreter.allocator);
+
+    const len = declaration.parameters.len;
+    var i: usize = 0;
+    while (i < len) : (i += 1) {
+        environment.define(declaration.parameters[i].lexeme, arguments[i]) catch unreachable;
+    }
+
+    const stdout_file = std.io.getStdOut();
+    var stmt: Stmt = Stmt{ .block = (declaration.body) };
+    _ = interpreter.execute(&stmt, stdout_file.writer()) catch unreachable;
+
+    return Value.Nil;
+}
+
+fn toStringFn(context: *anyopaque) []const u8 {
+    const declaration = @as(*Stmt.Function, @alignCast(@ptrCast(context)));
+    const name = declaration.name.lexeme;
+    _ = name;
+
+    return "<fn " ++ "todo" ++ ">";
+}
+
+pub fn functionCallable(allocator: Allocator, declaration: Stmt.Function) Allocator.Error!*Value.LoxFunction {
+    const out = try allocator.create(Value.LoxFunction);
+    errdefer allocator.destroy(out);
+    // var context = declaration; //@as(*const anyopaque, alignedDeclaration);
+    // @as(*Stmt.Function, @alignCast(@ptrCast(&declaration)))
+    const fun = try allocator.create(Stmt.Function);
+    errdefer allocator.destroy(fun);
+    fun.* = declaration;
+    out.* = Value.LoxFunction{
+        .arityFn = arityFn,
+        .callFn = callFn,
+        .toStringFn = toStringFn,
+        // .context = &context, // Set the context to the declaration pointer
+        .context = fun, // Set the context to the declaration pointer
+    };
+    return out;
+}
+
+// pub fn functionImplLoxCallable(comptime T: type, declaration: Stmt.Function, writer: anytype) T {
+//     return struct {
+//         .arityFn = struct {
+//             fn arity() usize {
+//                 return declaration.parameters.len;
+//             }
+//         }.arity,
+//         .callFn = struct {
+//             fn call(interpreter: *Interpreter, arguments: []Value) Value {
+//                 const environment = Environment.initEnclosing(interpreter.environment, interpreter.allocator);
+//
+//                 const len = declaration.parameters.len;
+//                 var i: usize = 0;
+//                 while (i < len) : (i += 1)
+//                     try environment.define(declaration.parameters[i].lexeme, arguments[i]);
+//
+//                 _ = try interpreter.execute(.{ .block = declaration.body }, writer);
+//
+//                 return Value.Nil;
+//             }
+//         }.call,
+//         .toStringFn = struct {
+//             fn toString() []const u8 {
+//                 return "<fn " ++ declaration.name.lexeme ++ ">";
+//             }
+//         }.toString,
+//     };
+//
+//     // return out;
+// }
