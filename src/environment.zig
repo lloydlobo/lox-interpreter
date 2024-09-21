@@ -39,11 +39,11 @@ pub const Environment = struct {
     // scope, it shadows the outer one. Code inside the block can't see it any
     // more—it is hidden in the "shadow" cas by the inner one—but it's still there.
     // `pub`: Required by `Interpreter.execute() -> .block => |statements|`
-    pub fn initEnclosing(enclosing: *Self) Environment {
+    pub fn initEnclosing(enclosing: *Environment, allocator: Allocator) Environment {
         return .{
-            .allocator = enclosing.allocator,
+            .allocator = allocator,
             .enclosing = enclosing,
-            .values = StringHashMap(Expr.Value).init(enclosing.allocator),
+            .values = StringHashMap(Expr.Value).init(allocator),
         };
     }
 

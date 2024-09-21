@@ -6,6 +6,7 @@ const FormatOptions = fmt.FormatOptions;
 
 const Expr = @import("expr.zig").Expr;
 const Token = @import("token.zig").Token;
+const debug = @import("debug.zig");
 
 /// statement        → expr
 ///                  | break_stmt
@@ -23,6 +24,7 @@ pub const Stmt = union(enum) {
     var_stmt: Var,
     while_stmt: While,
     block: []Stmt,
+    function: Function,
 
     /// "If         : Expr condition, Stmt thenBranch," + " Stmt elseBranch",
     ///
@@ -46,6 +48,26 @@ pub const Stmt = union(enum) {
     pub const While = struct {
         condition: *Expr,
         body: *Stmt,
+    };
+
+    pub const Function = struct { // should implement Callable
+        name: Token,
+        parameters: []Token,
+        body: []Stmt, // allocate separately?
+
+        pub fn create(allocator: Allocator) !*Function {
+            const self = try allocator.create(Function);
+            if (debug.is_trace_gc) std.debug.print(
+                "{} allocate {} for {s}\n",
+                .{ @intFromPtr(&self), @sizeOf(Function), @typeName(Function) },
+            );
+            return self;
+        }
+
+        pub fn destroy(self: *Function, vm: *anyopaque) void {
+            self.chunk.deinit();
+            vm.allocator.destroy(self);
+        }
     };
 };
 

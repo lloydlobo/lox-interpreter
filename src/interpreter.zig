@@ -1,9 +1,12 @@
 const std = @import("std");
 const mem = std.mem;
 const Allocator = mem.Allocator;
+const assert = std.debug.assert;
 
+// const callable = @import("callable.zig");
 const Environment = @import("environment.zig").Environment;
 const Expr = @import("expr.zig").Expr;
+const Value = Expr.Value;
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig").Token;
 
@@ -11,8 +14,11 @@ const runtimeError = @import("main.zig").runtimeError;
 const ErrorCode = @import("main.zig").ErrorCode;
 
 pub const Interpreter = struct {
-    environment: *Environment,
     allocator: Allocator,
+    /// Holds a fixed reference to the outermost global environment.
+    globals: *Environment,
+    /// Tracks current frame and changes as we enter and exit local scopes.
+    environment: *Environment,
 
     const Self = @This();
 
@@ -21,6 +27,8 @@ pub const Interpreter = struct {
         OperandNotNumber,
         OperandsNotNumbers,
         OperandsNeitherNumbersNorStrings,
+        WrongArity,
+        NotCallable,
     };
     pub const Error = Allocator.Error || Environment.Error || RuntimeError;
 
@@ -28,15 +36,43 @@ pub const Interpreter = struct {
     var undeclared_token: Token = undefined;
 
     pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
-        return .{
-            .environment = try Environment.init(allocator),
+        const self: Interpreter = .{
             .allocator = allocator,
+            .environment = try Environment.init(allocator),
+            .globals = try Environment.init(allocator),
         };
+
+        const clock_callable = try self.allocator.create(Value.LoxCallable);
+        clock_callable.* = .{
+            .arityFn = struct {
+                fn arity() usize {
+                    return 0;
+                }
+            }.arity,
+            .callFn = struct {
+                fn call(_: *Interpreter, _: []Value) Value {
+                    const now: f64 = @floatFromInt(std.time.milliTimestamp());
+                    const elapsed: f64 = now / 1000.0;
+                    return .{ .num = elapsed };
+                }
+            }.call,
+            .toStringFn = struct {
+                fn toString() []const u8 {
+                    return "<native fn>";
+                }
+            }.toString,
+        };
+
+        self.globals.define("clock", .{ .callable = clock_callable }) catch |err| {
+            try handleRuntimeError(err);
+            return error.OutOfMemory;
+        };
+
+        return self;
     }
 
     fn handleRuntimeError(err: Error) Allocator.Error!void {
         return switch (err) {
-            // RuntimeError
             error.OperandNotNumber => runtimeError(runtime_token, "Operand must be a number.", .{}),
             error.OperandsNotNumbers => runtimeError(runtime_token, "Operands must be numbers.", .{}),
             error.OperandsNeitherNumbersNorStrings => runtimeError(runtime_token, "Operands must two numbers or two strings.", .{}),
@@ -45,48 +81,45 @@ pub const Interpreter = struct {
                 @panic("IoError");
             },
 
-            // Environment.Error
             error.VariableNotDeclared => runtimeError(undeclared_token, "Undefined variable '{s}'.", .{undeclared_token.lexeme}),
 
-            // Allocator.Error
+            error.WrongArity, error.NotCallable => @panic("Unimplemented"),
+
             else => |other| other,
         };
     }
 
-    pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!void {
-        for (stmts) |*stmt| {
-            _ = self.execute(stmt, writer) catch |err|
-                return handleRuntimeError(err);
-        }
-    }
-
-    pub fn interpretExpression(self: *Self, expr: *Expr, writer: anytype) Allocator.Error!void {
-        const value = self.evaluate(expr) catch |err| return handleRuntimeError(err);
-        printValue(writer, value);
-    }
-
     fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Expr.Value {
         switch (stmt.*) {
-            .break_stmt => |break_stmt| {
-                // TODO: The syntax is a break keyword followed by a semicolon. It should
-                // be a syntax error to have a break statement appear outside of any
-                // enclosing loop.
+            // this should not be here, since we are evaluating function
+            // defininon, while execute should work only when called, unless the
+            // xpreession that is being called is this
+            .function => |fun| {
+                { // STUB
+                    const found_func_call = false;
+                    if (found_func_call) {
+                        std.debug.print("fun {s}({any}) {{\n", .{ fun.name.lexeme, fun.parameters });
+                        for (fun.body) |body| std.debug.print("\t{}\n", .{body});
+                        std.debug.print("}}\n", .{});
 
-                const previous = self.environment;
-                defer self.environment = previous;
+                        for (fun.body) |*body| {
+                            _ = try self.execute(body, writer);
+                        }
+                    } else {
+                        std.debug.print("Function needs to be called with `()`\n", .{});
+                    }
+                }
 
-                // MAY CAUSE INFINITE LOOPS
-                var environment: Environment = previous.initEnclosing();
-                self.environment = &environment;
-
-                if (break_stmt) |label| std.debug.print("[debug] break_stmt: {any}\n", .{label});
-
+                // @panic("Unimplemented");
+            },
+            .break_stmt => |break_stmt| { // See https://craftinginterpreters.com/control-flow.html#challenges
+                _ = break_stmt;
                 @panic("Unimplemented");
             },
             .block => |statements| {
                 const previous = self.environment;
                 defer self.environment = previous; // finally { ... }
-                var environment = previous.initEnclosing(); // try { ... }
+                var environment = Environment.initEnclosing(previous, self.allocator); //.initEnclosing(); // try { ... }
                 self.environment = &environment;
                 for (statements) |*statement|
                     _ = try self.execute(statement, writer);
@@ -102,8 +135,9 @@ pub const Interpreter = struct {
                 try self.environment.define(var_stmt.name.lexeme, value);
             },
             .while_stmt => |while_stmt| { // similar to If visit method
-                while (isTruthy(try self.evaluate(while_stmt.condition)))
+                while (isTruthy(try self.evaluate(while_stmt.condition))) {
                     _ = try self.execute(while_stmt.body, writer);
+                }
             },
             .print => |expr| {
                 printValue(writer, try self.evaluate(expr));
@@ -115,40 +149,6 @@ pub const Interpreter = struct {
         }
 
         return .{ .nil = {} };
-    }
-
-    /// Visit methods do a **post-order traversal**—each node evaluates its
-    /// children before doing its own work.
-    fn evaluate(self: *Self, expr: *Expr) Error!Expr.Value {
-        return switch (expr.*) {
-            .assign => |assign| blk: {
-                // Similar to variable declarations in `execute() => .var_stmt`:
-                // Recursively evaluate "rhs" to get the value, then store it
-                // in a named variable, via `assign()` instead of `define()`.
-                // Key change: assignment not allowed to create a new variable.
-                const value = try self.evaluate(assign.value);
-                self.environment.assign(assign.name, value) catch |err| {
-                    undeclared_token = assign.name;
-                    break :blk err; // key doesn't already exist in environments's variable map
-                };
-                break :blk value;
-            },
-            .binary => |binary| try self.visitBinaryExpr(binary),
-            .grouping => |group| try self.evaluate(group),
-            .literal => |literal| switch (literal) {
-                .str => |str| .{ .str = try self.allocator.dupe(u8, str) },
-                else => literal,
-            },
-            .logical => |logical| try self.visitLogicalExpr(logical),
-            .unary => |unary| try self.visitUnaryExpr(unary),
-            .variable => |variable| blk: {
-                break :blk self.environment.get(variable) catch |err| {
-                    undeclared_token = variable;
-                    break :blk err;
-                };
-            },
-            // else => @panic("Unimplemented"),
-        };
     }
 
     fn visitBinaryExpr(self: *Self, expr: Expr.Binary) Error!Expr.Value {
@@ -258,7 +258,115 @@ pub const Interpreter = struct {
             .bool => |x| std.fmt.format(writer, "{}", .{x}) catch {},
             .nil => std.fmt.format(writer, "nil", .{}) catch {},
             .num => |x| std.fmt.format(writer, "{d}", .{x}) catch {},
+            .obj => |x| std.fmt.format(writer, "{any}", .{x}) catch {},
             .str => |x| std.fmt.format(writer, "{s}", .{x}) catch {},
+            .callable => |x| std.fmt.format(writer, "{any}", .{x}) catch {},
+        }
+    }
+
+    /// Visit methods do a **post-order traversal**—each node evaluates its
+    /// children before doing its own work.
+    fn evaluate(self: *Self, expr: *Expr) Error!Expr.Value {
+        return switch (expr.*) {
+            .assign => |assign| blk: {
+                // Similar to variable declarations in `execute() => .var_stmt`:
+                // Recursively evaluate "rhs" to get the value, then store it
+                // in a named variable, via `assign()` instead of `define()`.
+                // Key change: assignment not allowed to create a new variable.
+                const value = try self.evaluate(assign.value);
+                self.environment.assign(assign.name, value) catch |err| {
+                    undeclared_token = assign.name;
+                    break :blk err; // key doesn't already exist in environments's variable map
+                };
+                break :blk value;
+            },
+            .binary => |binary| try self.visitBinaryExpr(binary),
+            // .call => |call| {
+            //     // TODO: See https://craftinginterpreters.com/functions.html#interpreting-function-calls
+            //     // TODO: create loxcallable.zig or callable.zig
+            //     const argcount: usize = call.arguments.len;
+            //     // Identifier that looks up the function by its name, but it
+            //     // could be anything.
+            //     const callee: Value = try self.evaluate(call.callee);
+            //     // Evaluate and collect values from each of the argument
+            //     // expressions in order.
+            //     var arguments = std.ArrayList(Expr.Value).init(self.allocator);
+            //     errdefer arguments.deinit();
+            //     for (call.arguments) |argument| { try arguments.append(try self.evaluate(argument)); }
+            //     if (!callee.isObj()) runtimeError(call.paren, "Can only call functions anf classes.", .{});
+            //     // if (@TypeOf(callee) != callable.Callable) // "totally not a function"(); //     runtimeError(call.paren, "Can only call functions anf classes.", .{});
+            //     std.debug.print(".call => {any} {any} {any}\n", .{ call.paren.lexeme, callee.str, argcount, });
+            //     // const function: ?callable.Callable = null;
+            //     // const function = callable.Callable.init(callable.Function.init( //     self.allocator, //     callee.str, //     argcount, // ));
+            //     // Before invoking the callable, we check to see if the
+            //     // argument list’s length matches the callable’s arity.
+            //     // if (function) |func| {
+            //     //     if (argcount != func.arity()) { //         runtimeError(call.paren, "Expected {d} arguments but got {d}.", .{ func.arity(), argcount }); //     }
+            //     // }
+            //     // return function.call(argcount, try arguments.toOwnedSlice());
+            //     return callee;
+            // },
+            .call => |call| {
+                std.debug.print("in evaluate() switch case .call => |call| ... \n", .{});
+                const callee = try self.evaluate(call.callee);
+
+                var arguments = std.ArrayList(Expr.Value).init(self.allocator);
+                defer arguments.deinit();
+
+                for (call.arguments) |argument| {
+                    try arguments.append(try self.evaluate(argument));
+                }
+
+                switch (callee) {
+                    .callable => |callable| {
+                        if (arguments.items.len != callable.arity()) {
+                            runtime_token = call.paren;
+                            return error.WrongArity;
+                        }
+                        return callable.callFn(self, arguments.items);
+                    },
+                    else => {
+                        runtime_token = call.paren;
+                        return error.NotCallable;
+                    },
+                }
+            },
+            .grouping => |group| try self.evaluate(group),
+            .literal => |literal| switch (literal) {
+                .str => |str| .{ .str = try self.allocator.dupe(u8, str) },
+                else => literal,
+            },
+            .logical => |logical| try self.visitLogicalExpr(logical),
+            .unary => |unary| try self.visitUnaryExpr(unary),
+            .variable => |variable| blk: {
+                break :blk self.environment.get(variable) catch |err| {
+                    undeclared_token = variable;
+                    break :blk err;
+                };
+            },
+            // else => @panic("Unimplemented"),
+        };
+    }
+
+    pub fn interpretExpression(self: *Self, expr: *Expr, writer: anytype) Allocator.Error!void {
+        const value = self.evaluate(expr) catch |err| return handleRuntimeError(err);
+        printValue(writer, value);
+    }
+
+    pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!void {
+        assert(self.environment.values.count() == 0);
+        if (self.globals.values.get("clock")) |clock| assert(mem.eql(u8, clock.callable.toString(), "<native fn>"));
+
+        errdefer self.environment.values.clearAndFree();
+        defer {
+            if (self.environment.values.count() != 0)
+                self.environment.values.clearAndFree();
+            assert(self.environment.values.count() == 0);
+        }
+
+        for (stmts) |*stmt| {
+            _ = self.execute(stmt, writer) catch |err|
+                return handleRuntimeError(err);
         }
     }
 };

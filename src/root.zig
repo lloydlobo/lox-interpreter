@@ -21,3 +21,17 @@ pub fn formatNumber(writer: anytype, num: f64) !void {
     if (std.mem.indexOfScalar(u8, str, '.') == null)
         try writer.writeAll(".0");
 }
+
+// See https://gitlab.com/andreyorst/lox/-/blob/main/src/zig/lox/common.zig?ref_type=heads#L80
+pub fn typeNameUnqualified(comptime T: type) []const u8 {
+    const name = @typeName(T); //> *const [N:0]u8
+    const index: comptime_int = if (std.mem.lastIndexOfAny(u8, name, ".")) |i| (i + 1) else 0;
+
+    return name[index..];
+}
+
+pub const LoxError = error{
+    OutOfMemoryError,
+    RuntimeError,
+    CompileError,
+};
