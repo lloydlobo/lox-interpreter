@@ -5,7 +5,7 @@ const fmt = std.fmt;
 const FormatOptions = fmt.FormatOptions;
 
 const Expr = @import("expr.zig").Expr;
-const Token = @import("token.zig").Token;
+const Token = @import("token.zig");
 const debug = @import("debug.zig");
 
 /// statement        → expr

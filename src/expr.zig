@@ -1,29 +1,20 @@
+//! See https://craftinginterpreters.com/appendix-ii.html#expressions
+
 const std = @import("std");
 
-const Obj = @import("object.zig").Obj;
 const Interpreter = @import("interpreter.zig").Interpreter;
-const Token = @import("token.zig").Token;
+const Obj = @import("object.zig").Obj;
+const Token = @import("token.zig");
 const formatNumber = @import("root.zig").formatNumber;
 
-const NAN_BOXING = false; // see https://gitlab.com/andreyorst/lox/-/blob/main/src/zig/lox/value.zig?ref_type=heads#L21
-
 pub const Expr = union(enum) {
-    /// ?
     assign: Assign,
-    /// → expression operator expression ;
     binary: Binary,
-    /// → primary ( "(" arguments? ")" )* ;
     call: Call,
-    /// → "(" expression ")" ;
     grouping: *Expr,
-    /// → NUMBER | STRING | "true" | "false" | "nil" ;
     literal: Value,
-    /// logic_or       → logic_and ( "or" logic_and )* ;
-    /// logic_and      → equality ( "and" equality )* ;
     logical: Logical,
-    /// → ( "-" | "!" ) expression ;
     unary: Unary,
-    /// ?
     variable: Token,
 
     pub const Assign = struct {
@@ -31,40 +22,30 @@ pub const Expr = union(enum) {
         value: *Expr,
     };
 
-    /// "Binary    : Expr left, Token operator, Expr right"
     pub const Binary = struct {
         left: *Expr,
-        /// → "==" | "!=" | "<" | "<=" | ">" | ">=" | "+"  | "-"  | "*" | "/" ;
         operator: Token,
         right: *Expr,
     };
 
-    /// "Call     : Expr callee, Token paren, List<Expr> arguments"
     pub const Call = struct {
         callee: *Expr,
         paren: Token,
-        /// → expression ( "," expression )* ;
-        arguments: []*Expr, // List<Expr>
+        arguments: []*Expr,
     };
 
-    /// "Logical  : Expr left, Token operator, Expr right",
-    // We could reuse the existing Expr.Binary class for these two new expressions since they have the same fields. But then visitBinaryExpr() would have to check to see if the operator is one of the logical operators and use a different code path to handle the short circuiting. I think it’s cleaner to define a new class for these operators so that they get their own visit method.
     pub const Logical = struct {
         left: *Expr,
-        /// → "==" | "!=" | "<" | "<=" | ">" | ">=" | "+"  | "-"  | "*" | "/" ;
         operator: Token,
         right: *Expr,
     };
 
-    /// "Unary    : Token operator, Expr right"
     pub const Unary = struct {
-        /// → "==" | "!=" | "<" | "<=" | ">" | ">=" | "+"  | "-"  | "*" | "/" ;
         operator: Token,
         right: *Expr,
     };
 
-    /// "Literal  : Object value"
-    pub const Value = union(enum) { // UnionValue
+    pub const Value = union(enum) {
         bool: bool,
         callable: *LoxCallable,
         function: *LoxFunction,
@@ -73,12 +54,11 @@ pub const Expr = union(enum) {
         obj: *Obj,
         str: []const u8,
 
-        // pub const Nil = Value{ .nil = undefined };
         pub const Nil = Value{ .nil = {} };
         pub const True = Value{ .bool = true };
         pub const False = Value{ .bool = !true };
 
-        pub const LoxCallable = struct {
+        pub const LoxCallable = struct { // native function
             arityFn: *const fn () usize,
             callFn: *const fn (*Interpreter, []Value) Value,
             toStringFn: *const fn () []const u8,
@@ -115,15 +95,11 @@ pub const Expr = union(enum) {
             }
         };
 
-        // See https://github.com/raulgrell/zox/blob/master/src/value.zig#L46
-        // See https://github.com/raulgrell/zox/blob/master/src/value.zig#L250
         pub fn isObj(self: Value) bool {
+            // See https://github.com/raulgrell/zox/blob/master/src/value.zig#L46
+            // See https://github.com/raulgrell/zox/blob/master/src/value.zig#L250
             return self == .obj;
         }
-
-        // (defrecord LoxCallable [arity, function]
-        //   IStringable
-        //   (tostring [_] "#<native fn>"))
 
         // See https://gitlab.com/andreyorst/lox/-/blob/main/src/zig/lox/value.zig?ref_type=heads#L253
         pub inline fn from(x: anytype) Value {
@@ -141,7 +117,6 @@ pub const Expr = union(enum) {
                 .bool => |val| try std.fmt.format(writer, "{}", .{val}),
                 .nil => try std.fmt.format(writer, "nil", .{}),
                 .num => |val| try formatNumber(writer, val),
-                // .obj => |obj| try std.fmt.format(writer, "{}", .{obj}),
                 .obj => |obj| try obj.print(writer),
                 .callable => |val| try std.fmt.format(writer, "{any}", .{val}),
                 .function => |val| try std.fmt.format(writer, "{any}", .{val}),
@@ -151,15 +126,6 @@ pub const Expr = union(enum) {
     };
 };
 
-pub const NanBoxedValue = packed struct {
-    data: u64,
-};
-
-// See https://gitlab.com/andreyorst/lox/-/blob/main/src/zig/lox/value.zig?ref_type=heads#L345
-// pub const Value = if (NAN_BOXING) NanBoxedValue else UnionValue;
-pub const EitherValue = if (NAN_BOXING) Expr.NanBoxedValue else Expr.Value;
-
-// See https://craftinginterpreters.com/appendix-ii.html#expressions
 // A2.1 Expressions
 //
 // Expressions are the first syntax tree nodes we see, introduced in
@@ -191,20 +157,25 @@ pub const EitherValue = if (NAN_BOXING) Expr.NanBoxedValue else Expr.Value;
 //
 //   abstract <R> R accept(Visitor<R> visitor);
 // }
-//
 
-// const NativeFn = *const fn (arg_count: u8, args: [*]Value, ctx: anytype) Interpreter.Error!Value;
+// assign →
+// binary → expression operator expression ;
+// call → primary ( "(" arguments? ")" )* ;
+// grouping → "(" expression ")" ;
+// literal → NUMBER | STRING | "true" | "false" | "nil" ;
+// logic_or       → logic_and ( "or" logic_and )* ;
+// logic_and      → equality ( "and" equality )* ;
+// unary → ( "-" | "!" ) expression ;
+// variable →
 //
-// const NativeFunctionCtx = struct {
-//     name: []const u8,
-//     arity: usize,
-//     fnPointer: *const fn () f64,
-// };
-
-// pub fn LoxCallable(comptime T: type) type {
-//     return struct {
-//         arity: fn () u32,
-//         call: fn (self: *T, arguments: []const T) anyerror!T,
-//         toString: fn () []const u8,
-//     };
-// }
+// operator → "==" | "!=" | "<" | "<=" | ">" | ">=" | "+"  | "-"  | "*" | "/" ;
+//
+// "Binary    : Expr left, Token operator, Expr right"
+// "Call     : Expr callee, Token paren, List<Expr> arguments"
+// "Logical  : Expr left, Token operator, Expr right",
+//      Avoids binary visit method see if operator is one of the logical
+//      operators and use a different code path to handle the short circuiting.
+// "Unary    : Token operator, Expr right"
+// "Literal  : Object value"
+//
+// arguments: []*Expr, // → expression ( "," expression )* ;

@@ -5,7 +5,7 @@ const AstPrinter = @import("astprinter.zig").AstPrinter;
 const Interpreter = @import("interpreter.zig").Interpreter;
 const Parser = @import("parser.zig").Parser;
 const Scanner = @import("scanner.zig").Scanner;
-const Token = @import("token.zig").Token;
+const Token = @import("token.zig");
 
 /// Toggled by `runtimeError()`
 var g_had_runtime_error: bool = false;

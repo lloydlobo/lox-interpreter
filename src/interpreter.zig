@@ -3,13 +3,14 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 const assert = std.debug.assert;
 
-const debug = @import("debug.zig");
 const Environment = @import("environment.zig").Environment;
 const Expr = @import("expr.zig").Expr;
-const Value = Expr.Value;
 const LoxCallable = Expr.Value.LoxCallable;
 const Stmt = @import("stmt.zig").Stmt;
-const Token = @import("token.zig").Token;
+const Token = @import("token.zig");
+const Value = Expr.Value;
+const debug = @import("debug.zig");
+const root = @import("root.zig");
 
 const runtimeError = @import("main.zig").runtimeError;
 const ErrorCode = @import("main.zig").ErrorCode;
@@ -20,11 +21,6 @@ pub const Interpreter = struct {
     globals: *Environment,
     /// Tracks current frame and changes as we enter and exit local scopes.
     environment: *Environment,
-
-    // TODO: add stdout and stderr writer fields to Interpreter and/or
-    // Environment, to aid with LoxFunction that implements LoxCallable
-    // out_writer: anytype,
-    // err_writer: anytype,
 
     const Self = @This();
 
@@ -74,42 +70,18 @@ pub const Interpreter = struct {
 
     fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Expr.Value {
         switch (stmt.*) {
-            //
-            // this should not be here, since we are evaluating function
-            // defininon, while execute should work only when called, unless the
-            // xpreession that is being called is this
-            //
             .function => |fun| {
-                std.log.debug("execute -> {any}, {}", .{ fun, @TypeOf(fun) });
-
-                // if (false) { // STUB
-                //     const found_func_call = false;
-                //     if (found_func_call) {
-                //         std.debug.print("fun {s}({any}) {{\n", .{ fun.name.lexeme, fun.parameters });
-                //         for (fun.body) |body| std.debug.print("\t{}\n", .{body});
-                //         std.debug.print("}}\n", .{});
-                //         for (fun.body) |*body| { _ = try self.execute(body, writer); }
-                //     } else {
-                //         std.debug.print("Function needs to be called with `()`\n", .{});
-                //     }
-                // }
-
-                // const function = try self.allocator.create(LoxCallable);
-                // errdefer self.allocator.destroy(function);
                 const res = try functionCallable(self.allocator, fun);
-                // function.* = res;
-
                 try self.environment.define(fun.name.lexeme, .{ .function = res });
-                // @panic("Unimplemented");
             },
-            .break_stmt => |break_stmt| { // See https://craftinginterpreters.com/control-flow.html#challenges
+            .break_stmt => |break_stmt| {
                 _ = break_stmt;
                 @panic("Unimplemented");
             },
             .block => |statements| {
                 const previous = self.environment;
-                defer self.environment = previous; // finally { ... }
-                var environment = Environment.initEnclosing(previous, self.allocator); //.initEnclosing(); // try { ... }
+                defer self.environment = previous;
+                var environment = Environment.initEnclosing(previous, self.allocator);
                 self.environment = &environment;
                 for (statements) |*statement|
                     _ = try self.execute(statement, writer);
@@ -121,7 +93,7 @@ pub const Interpreter = struct {
                     try self.execute(eb, writer);
             },
             .var_stmt => |var_stmt| {
-                const value: Expr.Value = if (var_stmt.initializer) |expr| try self.evaluate(expr) else .{ .nil = {} };
+                const value = if (var_stmt.initializer) |expr| try self.evaluate(expr) else Value.Nil;
                 try self.environment.define(var_stmt.name.lexeme, value);
             },
             .while_stmt => |while_stmt| { // similar to If visit method
@@ -142,7 +114,6 @@ pub const Interpreter = struct {
     }
 
     fn visitBinaryExpr(self: *Self, expr: Expr.Binary) Error!Expr.Value {
-        // see also https://craftinginterpreters.com/evaluating-expressions.html#evaluating-binary-operators
         const l = try self.evaluate(expr.left);
         const r = try self.evaluate(expr.right);
 
@@ -259,12 +230,10 @@ pub const Interpreter = struct {
     /// children before doing its own work.
     fn evaluate(self: *Self, expr: *Expr) Error!Expr.Value {
         return switch (expr.*) {
+            // Similar to variable declarations in `execute() => .var_stmt`:
+            // Key change: assignment not allowed to create a new variable.
             .assign => |assign| blk: {
-                // Similar to variable declarations in `execute() => .var_stmt`:
-                // Recursively evaluate "rhs" to get the value, then store it
-                // in a named variable, via `assign()` instead of `define()`.
-                // Key change: assignment not allowed to create a new variable.
-                const value = try self.evaluate(assign.value);
+                const value = try self.evaluate(assign.value); // Recursively evaluate "rhs" -> get value, and store in named variable
                 self.environment.assign(assign.name, value) catch |err| {
                     undeclared_token = assign.name;
                     break :blk err; // key doesn't already exist in environments's variable map
@@ -274,7 +243,6 @@ pub const Interpreter = struct {
             .binary => |binary| try self.visitBinaryExpr(binary),
             .call => |call| blk: {
                 const callee = try self.evaluate(call.callee);
-
                 var arguments = std.ArrayList(Expr.Value).init(self.allocator);
                 defer arguments.deinit();
 
@@ -282,19 +250,17 @@ pub const Interpreter = struct {
                     try arguments.append(try self.evaluate(argument));
                 }
 
-                std.log.debug("in evaluate() switch case .call => |call| ...", .{});
                 switch (callee) {
-                    .function => |function| { //user fn
-                        std.log.debug("in evaluate() switch case .call => |call| .function", .{});
-                        std.log.debug("{any}", .{function.arity()});
+                    .function => |function| { // user fn
                         if (arguments.items.len != function.arity()) {
                             runtime_token = call.paren;
                             break :blk error.WrongArity;
                         }
+                        const temp_str = function.toString();
+                        std.log.debug("temp_str: {s}", .{temp_str});
                         break :blk function.call(self, arguments.items);
                     },
-                    .callable => |callable| { //native fn
-                        std.log.debug("in evaluate() switch case .call => |call| .callable", .{});
+                    .callable => |callable| { // native fn
                         if (arguments.items.len != callable.arity()) {
                             runtime_token = call.paren;
                             break :blk error.WrongArity;
@@ -306,7 +272,7 @@ pub const Interpreter = struct {
                         break :blk error.NotCallable;
                     },
                 }
-                unreachable;
+                unreachable; // just in case
             },
             .grouping => |group| try self.evaluate(group),
             .literal => |literal| switch (literal) {
@@ -316,7 +282,7 @@ pub const Interpreter = struct {
             .logical => |logical| try self.visitLogicalExpr(logical),
             .unary => |unary| try self.visitUnaryExpr(unary),
             .variable => |variable| blk: {
-                std.log.debug("in evaluate switch .variable => expecting `fun hello()` {any}", .{variable});
+                // std.log.debug("in evaluate switch .variable => expecting `fun hello()` {any}", .{variable});
                 break :blk self.environment.get(variable) catch |err| {
                     undeclared_token = variable;
                     break :blk err;
@@ -375,10 +341,8 @@ const clockGlobalCallable: Value.LoxCallable = .{
 };
 
 fn arityFn(context: *anyopaque) usize {
-    // const declr: *const Stmt.Function = @alignCast(context);
     const declaration = @as(*Stmt.Function, @alignCast(@ptrCast(context)));
-    std.log.debug("declr: {}", .{declaration});
-    // return 0;
+
     return declaration.parameters.len;
 }
 
@@ -392,66 +356,41 @@ fn callFn(context: *anyopaque, interpreter: *Interpreter, arguments: []Value) Va
         environment.define(declaration.parameters[i].lexeme, arguments[i]) catch unreachable;
     }
 
-    const stdout_file = std.io.getStdOut();
+    const stdout_file = std.io.getStdOut(); // HACK: should use actual writer
     var stmt: Stmt = Stmt{ .block = (declaration.body) };
     _ = interpreter.execute(&stmt, stdout_file.writer()) catch unreachable;
 
     return Value.Nil;
 }
 
+// TODO: use context.allocator
+// Can manually deallocate. (note: without free found no leaks in valgrind)
 fn toStringFn(context: *anyopaque) []const u8 {
     const declaration = @as(*Stmt.Function, @alignCast(@ptrCast(context)));
     const name = declaration.name.lexeme;
-    _ = name;
 
-    return "<fn " ++ "todo" ++ ">";
+    // This allocator makes a syscall directly for every allocation and free. Thread-safe and lock-free.
+    const pa = std.heap.page_allocator;
+    const buffer = std.fmt.allocPrint(pa, "<fn {s}>", .{name}) catch return "<fn !error>";
+    errdefer pa.free(buffer); // note defer free leads to accessing unitialized value error
+
+    return buffer;
 }
 
 pub fn functionCallable(allocator: Allocator, declaration: Stmt.Function) Allocator.Error!*Value.LoxFunction {
     const out = try allocator.create(Value.LoxFunction);
     errdefer allocator.destroy(out);
-    // var context = declaration; //@as(*const anyopaque, alignedDeclaration);
-    // @as(*Stmt.Function, @alignCast(@ptrCast(&declaration)))
+
     const fun = try allocator.create(Stmt.Function);
     errdefer allocator.destroy(fun);
+
     fun.* = declaration;
     out.* = Value.LoxFunction{
         .arityFn = arityFn,
         .callFn = callFn,
         .toStringFn = toStringFn,
-        // .context = &context, // Set the context to the declaration pointer
-        .context = fun, // Set the context to the declaration pointer
+        .context = fun,
     };
+
     return out;
 }
-
-// pub fn functionImplLoxCallable(comptime T: type, declaration: Stmt.Function, writer: anytype) T {
-//     return struct {
-//         .arityFn = struct {
-//             fn arity() usize {
-//                 return declaration.parameters.len;
-//             }
-//         }.arity,
-//         .callFn = struct {
-//             fn call(interpreter: *Interpreter, arguments: []Value) Value {
-//                 const environment = Environment.initEnclosing(interpreter.environment, interpreter.allocator);
-//
-//                 const len = declaration.parameters.len;
-//                 var i: usize = 0;
-//                 while (i < len) : (i += 1)
-//                     try environment.define(declaration.parameters[i].lexeme, arguments[i]);
-//
-//                 _ = try interpreter.execute(.{ .block = declaration.body }, writer);
-//
-//                 return Value.Nil;
-//             }
-//         }.call,
-//         .toStringFn = struct {
-//             fn toString() []const u8 {
-//                 return "<fn " ++ declaration.name.lexeme ++ ">";
-//             }
-//         }.toString,
-//     };
-//
-//     // return out;
-// }

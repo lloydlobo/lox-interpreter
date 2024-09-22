@@ -7,7 +7,7 @@ const Allocator = mem.Allocator;
 const StringHashMap = std.StringHashMap;
 
 const Expr = @import("expr.zig").Expr;
-const Token = @import("token.zig").Token;
+const Token = @import("token.zig");
 
 pub const Environment = struct {
     allocator: Allocator,

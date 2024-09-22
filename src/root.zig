@@ -2,6 +2,8 @@
 
 const std = @import("std");
 const assert = std.debug.assert;
+const mem = std.mem;
+const Allocator = mem.Allocator;
 
 pub fn isAlphaNumeric(c: u8) bool {
     return switch (c) {
@@ -20,6 +22,20 @@ pub fn formatNumber(writer: anytype, num: f64) !void {
     try writer.writeAll(str);
     if (std.mem.indexOfScalar(u8, str, '.') == null)
         try writer.writeAll(".0");
+}
+
+pub fn concatStrings(allocator: Allocator, left: []const u8, right: []const u8) ![]u8 {
+    const nl = left.len;
+    const nr = right.len;
+    assert(nl > 0 and nr > 0);
+
+    var buffer = try allocator.alloc(u8, (nl + nr));
+    errdefer allocator.free(buffer);
+
+    std.mem.copyForwards(u8, buffer[0..nl], right);
+    std.mem.copyForwards(u8, buffer[nl..], right);
+
+    return buffer;
 }
 
 // See https://gitlab.com/andreyorst/lox/-/blob/main/src/zig/lox/common.zig?ref_type=heads#L80

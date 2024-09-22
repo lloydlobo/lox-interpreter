@@ -10,7 +10,7 @@ const AstPrinter = @import("astprinter.zig").AstPrinter;
 const Expr = @import("expr.zig").Expr;
 const Scanner = @import("scanner.zig").Scanner;
 const Stmt = @import("stmt.zig").Stmt;
-const Token = @import("token.zig").Token;
+const Token = @import("token.zig");
 const debug = @import("debug.zig");
 const tokenError = @import("main.zig").tokenError;
 

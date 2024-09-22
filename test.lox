@@ -2,7 +2,7 @@
 
 
 fun hello() {
-    print "hello world";
+    print "hello world from lox";
 }
 
 if (true) {
