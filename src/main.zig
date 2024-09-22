@@ -77,8 +77,8 @@ pub const Command = enum {
 };
 
 pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 {
-    var bw = std.io.bufferedWriter(writer);
-    const stdout_writer = bw.writer(); // const writer = std.io.getStdOut().writer();
+    // var bw = std.io.bufferedWriter(writer);
+    // const stdout_writer = bw.writer(); // const writer = std.io.getStdOut().writer();
 
     blk: {
         const cmd = Command.fromString(command).?;
@@ -88,7 +88,7 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
         const tokens = try scanner.scanTokens();
 
         if (cmd == .tokenize) {
-            for (tokens) |token| try stdout_writer.print("{}\n", .{token});
+            for (tokens) |token| try writer.print("{}\n", .{token});
             break :blk;
         }
 
@@ -106,13 +106,13 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
                 break :blk; // stop if syntax error
 
             if (cmd == .parse) {
-                try AstPrinter.print(stdout_writer, expression.?);
+                try AstPrinter.print(writer, expression.?);
                 break :blk;
             }
 
             if (cmd == .evaluate) {
                 var interpreter = try Interpreter.init(allocator);
-                try interpreter.interpretExpression(expression.?, stdout_writer);
+                try interpreter.interpretExpression(expression.?, writer);
                 break :blk;
             }
         }
@@ -128,7 +128,7 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
             }
 
             var interpreter = try Interpreter.init(arena.allocator());
-            try interpreter.interpret(statements, stdout_writer);
+            try interpreter.interpret(statements, writer);
             break :blk;
         }
     }
@@ -141,7 +141,7 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
             ErrorCode.syntax_error.toString(),
         });
 
-    try bw.flush();
+    // try bw.flush();
 
     var res: ErrorCode = .no_error;
     if (g_had_error) res = .syntax_error;

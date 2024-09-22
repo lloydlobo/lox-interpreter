@@ -203,9 +203,11 @@ fn printValue(writer: anytype, value: Expr.Value) void {
 }
 
 pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Expr.Value {
+    root.log_fn("execute", "{}", .{stmt}, writer);
+
     switch (stmt.*) {
         .block => |statements| {
-            // Discard that function-local environment and restores the
+            // Discard that block-local environment and restores the
             // previous one that was active back at the callsite.
             const previous = self.environment;
             defer self.environment = previous;
@@ -214,7 +216,6 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Expr.Value {
 
             for (statements) |*statement|
                 _ = try self.execute(statement, writer);
-            return Value.Nil; // We'll add return values later
         },
         .break_stmt => |break_stmt| {
             _ = break_stmt;
@@ -231,9 +232,11 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Expr.Value {
         },
         .function => |fun| {
             const res = try functionCtxCallable(self.allocator, fun); // A new env was created that is local to function call site and current is defer assigned back after it returns.
+            // std.log.debug("here in .function -> res: {any}", .{res});
             try self.environment.define(fun.name.lexeme, .{ .function = res });
         },
         .print => |expr| {
+            // std.log.debug("here in .print -> res: {any}", .{expr});
             printValue(writer, try self.evaluate(expr));
             writer.writeByte('\n') catch return error.IoError; // multi-line
         },
@@ -254,6 +257,8 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Expr.Value {
 /// Visit methods do a **post-order traversal**—each node evaluates its
 /// children before doing its own work.
 fn evaluate(self: *Self, expr: *Expr) Error!Expr.Value {
+    root.log_fn("evaluate", "{}", .{expr}, std.io.getStdOut().writer());
+
     return switch (expr.*) {
         // Similar to variable declarations in `execute() => .var_stmt`:
         // Key change: assignment not allowed to create a new variable.
@@ -266,29 +271,67 @@ fn evaluate(self: *Self, expr: *Expr) Error!Expr.Value {
             break :blk value;
         },
         .binary => |binary| try self.visitBinaryExpr(binary),
+
+        // First, we evaluate the expression for the callee. Typically, this
+        // expression is just an identifier that looks up the function by its
+        // name, but it could be anything. Then we evaluate each of the
+        // argument expressions in order and store the resulting values in a
+        // list.
+        //
+        // This is another one of those subtle semantic choices. Since argument
+        // expressions may have side effects, the order they are evaluated
+        // could be user visible. Even so, some languages like Scheme and C
+        // don’t specify an order. This gives compilers freedom to reorder them
+        // for efficiency, but means users may be unpleasantly surprised if
+        // arguments aren’t evaluated in the order they expect.
+        //
+        // Further, this environment must be created dynamically. Each function call
+        // gets its own environment. Otherwise, recursion would break. If there are
+        // multiple calls to the same function in play at the same time, each needs its
+        // own environment, even though they are all calls to the same function.
+        //
+        // That’s why we create a new environment at each call, not at the function
+        // declaration. The call() method we saw earlier does that. At the beginning of
+        // the call, it creates a new environment. Then it walks the parameter and
+        // argument lists in lockstep. For each pair, it creates a new variable with
+        // the parameter’s name and binds it to the argument’s value.
         .call => |call| blk: {
             const callee = try self.evaluate(call.callee);
+
+            // Discards the function-local environment and restores the previous one
+            // that was active back at the callsite.
+            const previous_environment = self.environment;
+            defer self.environment = previous_environment;
+            var environment = Environment.initEnclosing(previous_environment, self.allocator);
+            errdefer environment.deinit(); // Unimplemented
+            self.environment = &environment;
+
             var arguments = std.ArrayList(Expr.Value).init(self.allocator);
-            defer arguments.deinit();
+            errdefer arguments.deinit();
 
             for (call.arguments) |argument| {
                 try arguments.append(try self.evaluate(argument));
             }
 
+            // FIXME: I think we need to return functions rather than calling then in evaluate!
+            const args = try arguments.toOwnedSlice();
             switch (callee) {
-                .function => |function| { // user fn
-                    if (arguments.items.len != function.arity()) {
-                        runtime_token = call.paren;
-                        break :blk error.WrongArity;
-                    }
-                    break :blk function.call(self, arguments.items);
-                },
                 .callable => |callable| { // native fn
-                    if (arguments.items.len != callable.arity()) {
+                    if (args.len != callable.arity()) {
                         runtime_token = call.paren;
                         break :blk error.WrongArity;
                     }
-                    break :blk callable.callFn(self, arguments.items);
+                    break :blk callable.callFn(self, args);
+                },
+                .function => |function| { // user fn
+                    if (args.len != function.arity()) {
+                        runtime_token = call.paren;
+                        break :blk error.WrongArity;
+                    }
+                    // self.context when?
+                    //      LoxCallable function = (LoxCallable)callee;
+                    //      return function.call(this, arguments);
+                    break :blk function.call(self, args);
                 },
                 else => {
                     runtime_token = call.paren;

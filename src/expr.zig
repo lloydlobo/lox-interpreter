@@ -76,11 +76,25 @@ pub const Expr = union(enum) {
             }
         };
 
+        // pub fn HashMap(
+        //     comptime K: type,
+        //     comptime V: type,
+        //     comptime Context: type,
+        //     comptime max_load_percentage: u64,
+        // ) type {
+        //     return struct {
+        //         unmanaged: Unmanaged,
+        //         allocator: Allocator,
+        //         ctx: Context,
+        //
+        //         comptime {
+        //             verifyContext(Context, K, K, u64, false);
+        //         }
         pub const LoxFunction = struct {
             arityFn: *const fn (*anyopaque) usize,
             callFn: *const fn (*anyopaque, *Interpreter, []Value) Value,
             toStringFn: *const fn (*anyopaque) []const u8,
-            context: *anyopaque, // Context pointer to hold function-specific data
+            context: *anyopaque, // Context pointer to hold function-specific data. e.g. `FunctionContext`
 
             pub fn arity(self: *LoxFunction) usize {
                 return self.arityFn(self.context);

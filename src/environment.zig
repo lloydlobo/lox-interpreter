@@ -1,5 +1,4 @@
 const std = @import("std");
-const root = @import("root.zig");
 const assert = std.debug.assert;
 const testing = std.testing;
 const mem = std.mem;
@@ -7,6 +6,7 @@ const Allocator = mem.Allocator;
 const StringHashMap = std.StringHashMap;
 
 const Expr = @import("expr.zig").Expr;
+const root = @import("root.zig");
 const Token = @import("token.zig");
 
 const Environment = @This();
@@ -28,6 +28,7 @@ pub fn init(allocator: Allocator) Allocator.Error!*Environment {
 
     self.* = .{
         .allocator = allocator,
+        .enclosing = null,
         .values = StringHashMap(Expr.Value).init(allocator),
     };
 
@@ -41,9 +42,12 @@ pub fn init(allocator: Allocator) Allocator.Error!*Environment {
 // more—it is hidden in the "shadow" cas by the inner one—but it's still there.
 // `pub`: Required by `Interpreter.execute() -> .block => |statements|`
 pub fn initEnclosing(enclosing: *Environment, allocator: Allocator) Environment {
+    // root.log_fn("initEnclosing", "{any}", .{enclosing.values});
     return .{
         .allocator = allocator,
         .enclosing = enclosing,
+        // Create a managed hash map with an empty context. If the context is not zero-sized, you must use initContext(allocator, ctx) instead.
+        // .values = StringHashMap(Expr.Value).initContext(allocator, enclosing.values.ctx),
         .values = StringHashMap(Expr.Value).init(allocator),
     };
 }
@@ -57,7 +61,7 @@ pub fn deinit(self: *Environment) void {
 /// NOTE: This function call clobbers values.
 pub fn define(self: *Self, name: []const u8, value: Expr.Value) Error!void {
     assert(name.len > 0 and root.isAlphaNumeric(name[0]));
-
+    // root.log_fn("define", "{any}, {any}", .{ self.values, name });
     try self.values.put(name, value);
 }
 
@@ -76,6 +80,7 @@ pub fn define(self: *Self, name: []const u8, value: Expr.Value) Error!void {
 // the block disappear.
 pub fn get(self: *const Self, name: Token) Error!Expr.Value {
     assert(name.lexeme.len > 0 and root.isAlphaNumeric(name.lexeme[0]));
+    // root.log_fn("get", "{any}, {any}", .{ self.values, name });
 
     if (self.values.get(name.lexeme)) |value| return value;
     if (self.enclosing) |enclosing| return enclosing.get(name);

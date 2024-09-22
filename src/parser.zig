@@ -513,10 +513,10 @@ fn statement(self: *Parser) Error!Stmt {
     if (self.match(.{.@"if"})) return self.ifStatement();
     if (self.match(.{.@"for"})) return self.forStatement();
     if (self.match(.{.@"while"})) return self.whileStatement();
-    if (self.match(.{.print})) return self.printStatement();
     if (self.match(.{.left_brace})) return .{ .block = try self.block() };
     if (self.match(.{.@"break"})) return self.breakStatement();
-    return self.expressionStatement();
+    if (self.match(.{.print})) return self.printStatement();
+    return self.expressionStatement(); // finally identifier
 }
 
 /// Requires and consumes an identifier token for the variable name; and handles either assignment or no assignment.

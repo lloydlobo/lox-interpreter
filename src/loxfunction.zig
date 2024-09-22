@@ -15,6 +15,10 @@ const runtimeError = @import("main.zig").runtimeError;
 const root = @import("root.zig");
 const Stmt = @import("stmt.zig").Stmt;
 
+// pub const FunctionContext = struct {
+//     allocator: Allocator,
+//     declaration: Stmt.Function,
+// };
 pub const FunctionContext = struct {
     allocator: Allocator,
     declaration: Stmt.Function,
@@ -25,32 +29,14 @@ fn arityCtxFn(context: *anyopaque) usize {
     return ctx.declaration.parameters.len;
 }
 
-// Further, this environment must be created dynamically. Each function call
-// gets its own environment. Otherwise, recursion would break. If there are
-// multiple calls to the same function in play at the same time, each needs its
-// own environment, even though they are all calls to the same function.
-//
-// That’s why we create a new environment at each call, not at the function
-// declaration. The call() method we saw earlier does that. At the beginning of
-// the call, it creates a new environment. Then it walks the parameter and
-// argument lists in lockstep. For each pair, it creates a new variable with
-// the parameter’s name and binds it to the argument’s value.
-//
 fn callCtxFn(context: *anyopaque, interpreter: *Interpreter, arguments: []Value) Value {
     const ctx = @as(*FunctionContext, @alignCast(@ptrCast(context)));
-
-    // Trick to temporarily set new environment as default and defer reverting
-    // to previous as we leave this block scope.
     var block = Stmt{ .block = ctx.declaration.body };
-    const previous_environment = interpreter.environment;
-    defer interpreter.environment = previous_environment;
-    var environment = Environment.initEnclosing(previous_environment, ctx.allocator);
-    errdefer environment.deinit(); // Unimplemented
-    interpreter.environment = &environment;
+    const params = ctx.declaration.parameters;
 
-    for (ctx.declaration.parameters, 0..) |param, i| {
+    for (params, 0..) |param, i| {
         const argument = arguments[i];
-        environment.define(param.lexeme, argument) catch |err| {
+        interpreter.environment.define(param.lexeme, argument) catch |err| {
             root.eprint("Error in function: '{s}': ", .{ctx.declaration.name.lexeme});
             handleRuntimeError(err) catch |e|
                 root.exit(@intFromEnum(ErrorCode.runtime_error), "Failed to call handleRuntimeError: {any}.", .{e});

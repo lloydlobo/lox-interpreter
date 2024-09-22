@@ -5,6 +5,12 @@ const assert = std.debug.assert;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 
+pub fn log_fn(comptime fn_name: []const u8, comptime fmt: []const u8, args: anytype, writer:anytype) void {
+    if (false) {
+         writer.print(fn_name ++ "() " ++ fmt ++ "\n", args) catch unreachable;
+    }
+}
+
 // Copied from gitlab.com/andreorst/lox
 pub fn exit(status: u8, comptime fmt: []const u8, args: anytype) noreturn {
     eprint(fmt, args);
