@@ -2,7 +2,7 @@
 
 const std = @import("std");
 
-const Interpreter = @import("interpreter.zig").Interpreter;
+const Interpreter = @import("interpreter.zig");
 const Obj = @import("object.zig").Obj;
 const Token = @import("token.zig");
 const formatNumber = @import("root.zig").formatNumber;

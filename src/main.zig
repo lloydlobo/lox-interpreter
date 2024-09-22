@@ -2,8 +2,8 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const AstPrinter = @import("astprinter.zig").AstPrinter;
-const Interpreter = @import("interpreter.zig").Interpreter;
-const Parser = @import("parser.zig").Parser;
+const Interpreter = @import("interpreter.zig");
+const Parser = @import("parser.zig");
 const Scanner = @import("scanner.zig").Scanner;
 const Token = @import("token.zig");
 

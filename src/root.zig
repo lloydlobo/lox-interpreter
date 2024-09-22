@@ -5,6 +5,28 @@ const assert = std.debug.assert;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 
+// Copied from gitlab.com/andreorst/lox
+pub fn exit(status: u8, comptime fmt: []const u8, args: anytype) noreturn {
+    eprint(fmt, args);
+    std.process.exit(status);
+}
+// See also https://stackoverflow.com/a/74187657
+pub fn print(comptime fmt: []const u8, args: anytype) void {
+    const w = std.io.getStdOut().writer();
+    w.print(fmt, args) catch |err| exit(100, "Failed to write to stdout: {}", .{err});
+}
+pub fn eprint(comptime fmt: []const u8, args: anytype) void {
+    const w = std.io.getStdErr().writer();
+    w.print(fmt, args) catch |err| exit(100, "Failed to write to stdout: {}", .{err});
+}
+
+pub fn stdout() std.fs.File {
+    return std.io.getStdOut();
+}
+pub fn stderr() std.fs.File {
+    return std.io.getStdErr();
+}
+
 pub fn isAlphaNumeric(c: u8) bool {
     return switch (c) {
         '_', 'a'...'z', 'A'...'Z', '0'...'9' => true,
@@ -24,20 +46,6 @@ pub fn formatNumber(writer: anytype, num: f64) !void {
         try writer.writeAll(".0");
 }
 
-pub fn concatStrings(allocator: Allocator, left: []const u8, right: []const u8) ![]u8 {
-    const nl = left.len;
-    const nr = right.len;
-    assert(nl > 0 and nr > 0);
-
-    var buffer = try allocator.alloc(u8, (nl + nr));
-    errdefer allocator.free(buffer);
-
-    std.mem.copyForwards(u8, buffer[0..nl], right);
-    std.mem.copyForwards(u8, buffer[nl..], right);
-
-    return buffer;
-}
-
 // See https://gitlab.com/andreyorst/lox/-/blob/main/src/zig/lox/common.zig?ref_type=heads#L80
 pub fn typeNameUnqualified(comptime T: type) []const u8 {
     const name = @typeName(T); //> *const [N:0]u8
@@ -51,3 +59,12 @@ pub const LoxError = error{
     RuntimeError,
     CompileError,
 };
+
+//
+// const Writer = struct {
+//     writeFn: *const fn (self: *Writer, bytes: []const u8) anyerror!usize,
+//
+//     pub fn write(self: *Writer, bytes: []const u8) anyerror!usize {
+//         return self.writeFn(self, bytes);
+//     }
+// };

@@ -47,6 +47,8 @@ pub const Environment = struct {
         };
     }
 
+    pub fn deinit() void {}
+
     /// NOTE: This function call clobbers values.
     pub fn define(self: *Self, name: []const u8, value: Expr.Value) Error!void {
         assert(name.len > 0 and root.isAlphaNumeric(name[0]));
