@@ -551,10 +551,11 @@ fn fnDeclaration(self: *Parser, comptime kind: []const u8) Error!Stmt {
     _ = try self.consume(.left_brace, "Expect '{{' before " ++ kind ++ " body.");
     const body: []Stmt = try self.block();
 
+    const params = try parameters.toOwnedSlice();
     const fun = try Stmt.Function.create(self.allocator);
     fun.* = .{
         .name = name,
-        .parameters = try parameters.toOwnedSlice(),
+        .parameters = params,
         .body = body,
     };
 

@@ -57,7 +57,8 @@ pub const Stmt = union(enum) {
 
         pub fn create(allocator: Allocator) !*Function {
             const self = try allocator.create(Function);
-            if (debug.is_trace_gc) std.log.debug("{} allocate {} for {s}", .{ @intFromPtr(&self), @sizeOf(Function), @typeName(Function) });
+            if (comptime debug.is_trace_gc)
+                std.log.debug("{} allocate {} for {s}", .{ @intFromPtr(&self), @sizeOf(Function), @typeName(Function) });
 
             return self;
         }

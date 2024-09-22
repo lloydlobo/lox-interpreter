@@ -4,7 +4,7 @@ const testing = std.testing;
 
 const formatNumber = @import("root.zig").formatNumber;
 
-pub const Token = @This();
+const Token = @This();
 
 // pub const Token: type = struct {
 lexeme: []const u8,

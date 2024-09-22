@@ -6,7 +6,7 @@ const assert = std.debug.assert;
 const debug = @import("debug.zig");
 const root = @import("root.zig");
 
-const Environment = @import("environment.zig").Environment;
+const Environment = @import("environment.zig");
 const ErrorCode = @import("main.zig").ErrorCode;
 const Expr = @import("expr.zig").Expr;
 const Value = Expr.Value;
@@ -76,7 +76,7 @@ pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
     return self;
 }
 
-fn handleRuntimeError(err: Error) Allocator.Error!void {
+pub fn handleRuntimeError(err: Error) Allocator.Error!void {
     return switch (err) {
         error.OperandNotNumber => runtimeError(runtime_token, "Operand must be a number.", .{}),
         error.OperandsNotNumbers => runtimeError(runtime_token, "Operands must be numbers.", .{}),
@@ -197,34 +197,45 @@ fn printValue(writer: anytype, value: Expr.Value) void {
         .num => |x| std.fmt.format(writer, "{d}", .{x}) catch {},
         .obj => |x| std.fmt.format(writer, "{any}", .{x}) catch {},
         .str => |x| std.fmt.format(writer, "{s}", .{x}) catch {},
-        .callable => |x| std.fmt.format(writer, "{any}", .{x}) catch {},
-        .function => |x| std.fmt.format(writer, "{any}", .{x}) catch {},
+        .callable => |x| std.fmt.format(writer, "{s}", .{x.toString()}) catch {},
+        .function => |x| std.fmt.format(writer, "{s}", .{x.toString()}) catch {},
     }
 }
 
 pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Expr.Value {
     switch (stmt.*) {
-        .function => |fun| {
-            const res = try functionCtxCallable(self.allocator, fun);
-            try self.environment.define(fun.name.lexeme, .{ .function = res });
+        .block => |statements| {
+            // Discard that function-local environment and restores the
+            // previous one that was active back at the callsite.
+            const previous = self.environment;
+            defer self.environment = previous;
+            var environment = Environment.initEnclosing(previous, self.allocator);
+            self.environment = &environment;
+
+            for (statements) |*statement|
+                _ = try self.execute(statement, writer);
+            return Value.Nil; // We'll add return values later
         },
         .break_stmt => |break_stmt| {
             _ = break_stmt;
             @panic("Unimplemented");
         },
-        .block => |statements| {
-            const previous = self.environment;
-            defer self.environment = previous;
-            var environment = Environment.initEnclosing(previous, self.allocator);
-            self.environment = &environment;
-            for (statements) |*statement|
-                _ = try self.execute(statement, writer);
+        .expr => |expr| {
+            _ = try self.evaluate(expr);
         },
         .if_stmt => |if_stmt| {
             _ = if (isTruthy(try self.evaluate(if_stmt.condition)))
                 try self.execute(if_stmt.then_branch, writer)
             else if (if_stmt.else_branch) |eb|
                 try self.execute(eb, writer);
+        },
+        .function => |fun| {
+            const res = try functionCtxCallable(self.allocator, fun); // A new env was created that is local to function call site and current is defer assigned back after it returns.
+            try self.environment.define(fun.name.lexeme, .{ .function = res });
+        },
+        .print => |expr| {
+            printValue(writer, try self.evaluate(expr));
+            writer.writeByte('\n') catch return error.IoError; // multi-line
         },
         .var_stmt => |var_stmt| {
             const value = if (var_stmt.initializer) |expr| try self.evaluate(expr) else Value.Nil;
@@ -234,13 +245,6 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Expr.Value {
             while (isTruthy(try self.evaluate(while_stmt.condition))) {
                 _ = try self.execute(while_stmt.body, writer);
             }
-        },
-        .print => |expr| {
-            printValue(writer, try self.evaluate(expr));
-            writer.writeByte('\n') catch return error.IoError; // multi-line
-        },
-        .expr => |expr| {
-            _ = try self.evaluate(expr);
         },
     }
 

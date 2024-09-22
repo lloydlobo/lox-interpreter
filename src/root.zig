@@ -60,6 +60,31 @@ pub const LoxError = error{
     CompileError,
 };
 
+// See https://stackoverflow.com/a/66665672
+//
+// Array concatenation operator, for two comptime-known strings:
+//
+// const final_url = "https://github.com/" ++ user ++ "/reponame";
+// std.fmt.comptimePrint for comptime-known strings and numbers and other formattable things:
+//
+// const final_url = comptime std.fmt.comptimePrint("https://github.com/{s}/reponame", .{user});
+// Runtime, with allocation:
+//
+// const final_url = try std.fmt.allocPrint(alloc, "https://github.com/{s}/reponame", .{user});
+// defer alloc.free(final_url);
+// Runtime, no allocation, with a comptime-known maximum length:
+//
+// var buffer = [_]u8{undefined} ** 100;
+// const printed = try std.fmt.bufPrint(&buffer, "https://github.com/{s}/reponame", .{user});
+// Runtime, using ArrayList
+//
+// var string = std.ArrayList(u8).init(gpa);
+// defer string.deinit();
+// try string.appendSlice("https://github.com/");
+// try string.appendSlice(user);
+// try string.appendSlice("/reponame");
+// const final_url = string.items;
+
 //
 // const Writer = struct {
 //     writeFn: *const fn (self: *Writer, bytes: []const u8) anyerror!usize,
