@@ -36,6 +36,8 @@ environment: *Environment,
 
 var runtime_token: Token = undefined;
 var undeclared_token: Token = undefined;
+pub var runtime_return_value: Value = undefined;
+pub var runtime_error: Error = undefined;
 
 const Self = @This();
 
@@ -48,7 +50,10 @@ const RuntimeError = error{
     NotCallable,
 };
 
-pub const Error = Allocator.Error || Environment.Error || RuntimeError;
+/// These are not actual errors, but a way to propagate stuff like return values.
+const PropagationException = error{Return};
+
+pub const Error = Allocator.Error || Environment.Error || RuntimeError || PropagationException;
 
 pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
     var self: Interpreter = .{
@@ -76,6 +81,12 @@ pub fn handleRuntimeError(err: Error) Allocator.Error!void {
         error.WrongArity => runtimeError(undeclared_token, "Wrong function arguments arity '{s}'.", .{undeclared_token.lexeme}),
         error.NotCallable => runtimeError(undeclared_token, "Value not callable '{s}'.", .{undeclared_token.lexeme}),
         error.IoError => root.exit(1, "Encountered i/o error at runtime.", .{}),
+        error.Return => {
+            root.tracesrc(@src(), "Trick to propagate return values with errors '{any}' {any}.", .{
+                runtime_token,
+                runtime_return_value,
+            });
+        },
         else => |other| other,
     };
 }
@@ -218,26 +229,28 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
             printValue(writer, try self.evaluate(expr));
             writer.writeByte('\n') catch return error.IoError; // multi-line
         },
+        // If we have a return value, we evaluate it, otherwise, we use nil.
+        // Then we take that value and wrap it in a custom exception class and
+        // throw it. We want this to unwind all the way to where the function
+        // call began, the call() method in LoxFunction.
         .return_stmt => |return_stmt| {
-            // If we have a return value, we evaluate it, otherwise, we use nil.
-            // Then we take that value and wrap it in a custom exception class and
-            // throw it. We want this to unwind all the way to where the function
-            // call began, the call() method in LoxFunction.
             const value: ?Value = if (return_stmt.value) |val| try self.evaluate(val) else null;
-            const val: Expr.LoxReturnValue = Expr.LoxReturnValue.fromValue(value);
-            const ret = try self.allocator.create(Expr.LoxReturnValue);
-            errdefer self.allocator.destroy(ret);
-            ret.* = val;
-            const ret_val: Value = .{ .ret = ret };
-            // eval again? due to union Value and return a valid Value that is not a return type, since it is redundant after executing????
-            // also how are we unwinding to the call stack?
-            std.log.debug("Interpreter.zig: in execute(): .return_stmt => |return_stmt|: {any}, ret_val: {any}", .{ return_stmt, ret_val });
-            out = ret_val;
+            var ret = Expr.LoxReturnValue.fromValue(value);
+            root.tracesrc(@src(), "prior to returning: ====[stmt, return_stmt, ret]: '{any}', '{any}', '{any}'====", .{ stmt.toString(), return_stmt, ret });
+
+            out = .{ .ret = &ret };
+
+            runtime_token = stmt.return_stmt.keyword;
+            runtime_return_value = ret.ret;
+            runtime_error = error.Return;
+            // try handleRuntimeError(error.Return);
+
+            return error.Return;
         },
         .var_stmt => |var_stmt| {
             const value = if (var_stmt.initializer) |expr| try self.evaluate(expr) else Value.Nil;
             try self.environment.define(var_stmt.name.lexeme, value);
-            // break :blk value;
+            out = value;
         },
         .while_stmt => |while_stmt| {
             while (isTruthy(try self.evaluate(while_stmt.condition))) {
@@ -245,8 +258,7 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
             }
         },
     }
-
-    std.log.debug("about to return from execute() with out: {any}", .{out});
+    root.tracesrc(@src(), "about to return: [stmt, out]: '{s}', '{any}'", .{ stmt.toString(), out });
     return if (out) |x| x else Value.Nil;
 }
 
@@ -254,9 +266,7 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
 /// children before doing its own work.
 fn evaluate(self: *Self, expr: *Expr) Error!Expr.Value {
     return switch (expr.*) {
-        // Recursively evaluate "rhs" -> get value, and store in named variable
-        // Similar to variable declarations in `execute() => .var_stmt`:
-        // Key change: assignment not allowed to create a new variable.
+        // Recursively evaluate "rhs" -> get value, and store in named variable Similar to variable declarations in `execute() => .var_stmt`: Key change: assignment not allowed to create a new variable.
         .assign => |assign| blk: {
             const value = try self.evaluate(assign.value);
             self.environment.assign(assign.name, value) catch |err| {
@@ -267,31 +277,12 @@ fn evaluate(self: *Self, expr: *Expr) Error!Expr.Value {
             break :blk value;
         },
         .binary => |binary| try self.visitBinaryExpr(binary),
-        // First, we evaluate the expression for the callee. Typically, this
-        // expression is just an identifier that looks up the function by its
-        // name, but it could be anything. Then we evaluate each of the
-        // argument expressions in order and store the resulting values in a
-        // list.
-        //
-        // This is another one of those subtle semantic choices. Since argument
-        // expressions may have side effects, the order they are evaluated
-        // could be user visible. Even so, some languages like Scheme and C
-        // don’t specify an order. This gives compilers freedom to reorder them
-        // for efficiency, but means users may be unpleasantly surprised if
-        // arguments aren’t evaluated in the order they expect.
-        //
-        // Further, this environment must be created dynamically. Each function call
-        // gets its own environment. Otherwise, recursion would break. If there are
-        // multiple calls to the same function in play at the same time, each needs its
-        // own environment, even though they are all calls to the same function.
-        //
-        // That’s why we create a new environment at each call, not at the function
-        // declaration. The call() method we saw earlier does that. At the beginning of
-        // the call, it creates a new environment. Then it walks the parameter and
-        // argument lists in lockstep. For each pair, it creates a new variable with
-        // the parameter’s name and binds it to the argument’s value.
+        // * First, we evaluate the expression for the callee. Typically, this expression is just an identifier that looks up the function by its name, but it could be anything. Then we evaluate each of the argument expressions in order and store the resulting values in a list.
+        // * This is another one of those subtle semantic choices. Since argument expressions may have side effects, the order they are evaluated could be user visible. Even so, some languages like Scheme and C don’t specify an order. This gives compilers freedom to reorder them for efficiency, but means users may be unpleasantly surprised if arguments aren’t evaluated in the order they expect.
+        // * Further, this environment must be created dynamically. Each function call gets its own environment. Otherwise, recursion would break. If there are multiple calls to the same function in play at the same time, each needs its own environment, even though they are all calls to the same function.
+        // * That’s why we create a new environment at each call, not at the function declaration. The call() method we saw earlier does that. At the beginning of the call, it creates a new environment. Then it walks the parameter and argument lists in lockstep. For each pair, it creates a new variable with the parameter’s name and binds it to the argument’s value.
         .call => |call| blk: {
-            const callee = try self.evaluate(call.callee);
+            const callee: Value = try self.evaluate(call.callee);
 
             // Discards the call-local environment and restores the previous one
             // that was active back at the callsite.
@@ -303,9 +294,14 @@ fn evaluate(self: *Self, expr: *Expr) Error!Expr.Value {
 
             var arguments = std.ArrayList(Expr.Value).init(self.allocator);
             errdefer arguments.deinit();
-            for (call.arguments) |argument| try arguments.append(try self.evaluate(argument));
+
+            for (call.arguments) |argument|
+                try arguments.append(try self.evaluate(argument));
 
             const args = try arguments.toOwnedSlice();
+            // _ = ;
+            root.tracesrc(@src(), "in .call => `{0any}`, `{1any}`", .{ call.callee.variable, root.unionPayloadPtr(Expr, expr) });
+            root.tracesrc(@src(), "match runtime_error: '{any}', '{any}'=====", .{ runtime_error, call });
             switch (callee) {
                 .callable => |callable| { // native fn
                     if (args.len != callable.arity()) {
@@ -319,10 +315,14 @@ fn evaluate(self: *Self, expr: *Expr) Error!Expr.Value {
                         runtime_token = call.paren;
                         break :blk error.WrongArity;
                     }
+                    if (runtime_error == error.Return) {
+                        root.tracesrc(@src(), "match runtime_error: '{any}', '{any}'=====", .{ runtime_error, function });
+                    }
                     break :blk function.call(self, args);
                 },
                 else => {
                     runtime_token = call.paren;
+                    // runtime_token = call.callee.variable;
                     break :blk error.NotCallable;
                 },
             }
@@ -350,7 +350,7 @@ pub fn interpretExpression(self: *Self, expr: *Expr, writer: anytype) Allocator.
 }
 
 pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!void {
-    if (comptime debug.is_trace_env) {
+    if (comptime debug.is_trace_compiler) {
         assert(self.environment.values.count() == 0);
         if (self.globals.values.get("clock")) |value| {
             const fun = value.callable;
@@ -361,18 +361,17 @@ pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!vo
     }
     errdefer self.environment.values.clearAndFree();
     defer {
-        if (self.environment.values.count() != 0) {
-            self.environment.values.clearAndFree();
-        }
+        if (self.environment.values.count() != 0) self.environment.values.clearAndFree();
         assert(self.environment.values.count() == 0);
     }
 
     var outputs = std.ArrayList(Value).init(self.allocator);
-    errdefer outputs.deinit();
+    defer outputs.deinit();
+
     for (stmts) |*stmt| {
-        const out = self.execute(stmt, writer) catch |err| return handleRuntimeError(err);
-        std.log.debug("interpreter.zig:in interpret(): out: {any}", .{out});
-        try outputs.append(out);
+        const value = self.execute(stmt, writer) catch |err| return handleRuntimeError(err);
+        try outputs.append(value);
     }
-    std.log.debug("interpreter.zig:in interpret(): outputs: {any}, outputs<slice>: {any}", .{ outputs, try outputs.toOwnedSlice() });
+
+    if (comptime debug.is_trace_compiler) root.tracesrc(@src(), "outputs: '{any}'", .{outputs});
 }

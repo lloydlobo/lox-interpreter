@@ -1,15 +1,14 @@
 // test.lox
 
 fun hello() {
-    var out = "hello(): from lox";
     print hello;
-    print out;
-    print hello;
+    var out = "hello(): from lox, ( return out )";
     return out;
 }
+print hello;
 var ret = hello();
 print ret;
-// print hello;
+print hello;
 // hello();
 
 

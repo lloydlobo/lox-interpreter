@@ -74,6 +74,21 @@ pub const Stmt = union(enum) {
             vm.allocator.destroy(self);
         }
     };
+
+    /// Converts an enum value or union value to a string literal representing
+    /// the name. If the enum is non-exhaustive and the tag value does not map to a
+    /// name, it invokes safety-checked [Undefined Behavior](https://ziglang.org/documentation/0.13.0/#Undefined-Behavior).
+    pub fn toString(self: Stmt) []const u8 {
+        return @tagName(self);
+    }
+
+    // const t = @typeInfo(Stmt);
+    // if (t == .Union) {
+    //     const info = t.Union;
+    //     inline for (info.fields) |field| {
+    //         std.log.debug("{s} {any} {any}", .{ field.name, field.type, field.alignment });
+    //     }
+    // }
 };
 
 // See https://craftinginterpreters.com/appendix-ii.html#statements

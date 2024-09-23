@@ -1,6 +1,7 @@
 //! A recursive descent parser. The main entry point is the `parse` function.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const root = @import("root.zig");
 const assert = std.debug.assert;
 const mem = std.mem;
@@ -530,6 +531,7 @@ fn returnStatement(self: *Parser) Error!Stmt {
         .keyword = keyword,
         .value = value,
     } };
+    root.tracesrc(@src(), "stmt: {}", .{stmt});
 
     return stmt;
 }
@@ -553,6 +555,7 @@ fn varDeclaration(self: *Parser) Error!Stmt {
     const name = try self.consume(.identifier, "Expect variable name.");
     const value = if (self.match(.{.equal})) try self.expression() else null;
     _ = try self.consume(.semicolon, "Expect ';' after variable declaration.");
+
     const stmt: Stmt = .{ .var_stmt = .{
         .name = name,
         .initializer = value,
