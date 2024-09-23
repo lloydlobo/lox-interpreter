@@ -4,8 +4,6 @@ const Allocator = mem.Allocator;
 const assert = std.debug.assert;
 
 const debug = @import("debug.zig");
-const root = @import("root.zig");
-
 const Environment = @import("environment.zig");
 const ErrorCode = @import("main.zig").ErrorCode;
 const Expr = @import("expr.zig").Expr;
@@ -14,36 +12,30 @@ const LoxCallable = Value.LoxCallable;
 const LoxFunction = Value.LoxFunction;
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
+const root = @import("root.zig");
 const runtimeError = @import("main.zig").runtimeError;
 const functionCtxCallable = @import("loxfunction.zig").functionCtxCallable;
 
 const clockGlobalCallable: LoxCallable = .{
-    .arityFn = struct {
-        fn arity() usize {
-            return 0;
-        }
-    }.arity,
-    .callFn = struct {
-        fn call(_: *Interpreter, _: []Value) Value {
-            return .{ .num = (@as(f64, @floatFromInt(std.time.milliTimestamp())) / 1000.0) };
-        }
-    }.call,
-    .toStringFn = struct {
-        fn toString() []const u8 {
-            return "<native fn>";
-        }
-    }.toString,
+    // zig fmt: off
+    .arityFn = struct {fn arity() usize {return 0;}}.arity,
+    .callFn = struct {fn call(_: *Interpreter, _: []Value) Value { 
+        return .{.num = (@as(f64, @floatFromInt(std.time.milliTimestamp())) / 1000.0)}; 
+    }}.call,
+    .toStringFn = struct {fn toString() []const u8 {return "<native fn>";}}.toString,
+    // zig fmt: on
 };
 
-const Interpreter = @This();
+const Interpreter = @This(); // File struct
 
 allocator: Allocator,
-
 /// Holds a fixed reference to the outermost global environment.
 globals: *Environment,
-
 /// Tracks current frame and changes as we enter and exit local scopes.
 environment: *Environment,
+
+var runtime_token: Token = undefined;
+var undeclared_token: Token = undefined;
 
 const Self = @This();
 
@@ -55,23 +47,22 @@ const RuntimeError = error{
     WrongArity,
     NotCallable,
 };
+
 pub const Error = Allocator.Error || Environment.Error || RuntimeError;
 
-var runtime_token: Token = undefined;
-var undeclared_token: Token = undefined;
-
 pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
-    const self: Interpreter = .{
+    var self: Interpreter = .{
         .allocator = allocator,
         .environment = try Environment.init(allocator),
         .globals = try Environment.init(allocator),
     };
 
-    const clock_callable = try self.allocator.create(LoxCallable);
-    clock_callable.* = clockGlobalCallable;
-
-    self.globals.define("clock", .{ .callable = clock_callable }) catch |err|
-        try handleRuntimeError(err);
+    {
+        const clock_callable = try self.allocator.create(LoxCallable);
+        clock_callable.* = clockGlobalCallable;
+        self.globals.define("clock", .{ .callable = clock_callable }) catch |err|
+            try handleRuntimeError(err);
+    }
 
     return self;
 }
@@ -92,7 +83,6 @@ pub fn handleRuntimeError(err: Error) Allocator.Error!void {
 fn visitBinaryExpr(self: *Self, expr: Expr.Binary) Error!Expr.Value {
     const l = try self.evaluate(expr.left);
     const r = try self.evaluate(expr.right);
-
     const opsn = checkOperands(expr.operator, l, r, .num);
 
     return switch (expr.operator.type) {
@@ -128,22 +118,8 @@ fn visitLogicalExpr(self: *Self, expr: Expr.Logical) Error!Expr.Value {
     return try self.evaluate(expr.right);
 }
 
-fn visitUnaryExpr(self: *Self, expr: Expr.Unary) Error!Expr.Value {
-    const r = try self.evaluate(expr.right);
-
-    return switch (expr.operator.type) {
-        .minus => .{ .num = -(checkOperand(expr.operator, r, .num) orelse return error.OperandNotNumber) },
-        .bang => .{ .bool = !isTruthy(r) },
-        else => unreachable,
-    };
-}
-
 /// Matches operator type with kind and returns its type.
-fn checkOperand(
-    operator: Token,
-    operand: Expr.Value,
-    comptime kind: std.meta.FieldEnum(Expr.Value),
-) ?std.meta.fieldInfo(Expr.Value, kind).type {
+fn checkOperand(operator: Token, operand: Expr.Value, comptime kind: std.meta.FieldEnum(Expr.Value)) ?std.meta.fieldInfo(Expr.Value, kind).type {
     return switch (operand) {
         kind => |x| x,
         else => {
@@ -153,18 +129,23 @@ fn checkOperand(
     };
 }
 
-fn checkOperands(
-    operator: Token,
-    left: Expr.Value,
-    right: Expr.Value,
-    comptime kind: std.meta.FieldEnum(Expr.Value),
-) ?struct {
+fn checkOperands(operator: Token, left: Expr.Value, right: Expr.Value, comptime kind: std.meta.FieldEnum(Expr.Value)) ?struct {
     l: std.meta.fieldInfo(Expr.Value, kind).type,
     r: std.meta.fieldInfo(Expr.Value, kind).type,
 } {
     return .{
         .l = checkOperand(operator, left, kind) orelse return null,
         .r = checkOperand(operator, right, kind) orelse return null,
+    };
+}
+
+fn visitUnaryExpr(self: *Self, expr: Expr.Unary) Error!Expr.Value {
+    const r = try self.evaluate(expr.right);
+
+    return switch (expr.operator.type) {
+        .minus => .{ .num = -(checkOperand(expr.operator, r, .num) orelse return error.OperandNotNumber) },
+        .bang => .{ .bool = !isTruthy(r) },
+        else => unreachable,
     };
 }
 
@@ -195,15 +176,16 @@ fn printValue(writer: anytype, value: Expr.Value) void {
         .bool => |x| std.fmt.format(writer, "{}", .{x}) catch {},
         .nil => std.fmt.format(writer, "nil", .{}) catch {},
         .num => |x| std.fmt.format(writer, "{d}", .{x}) catch {},
-        .obj => |x| std.fmt.format(writer, "{any}", .{x}) catch {},
+        // .obj => |x| std.fmt.format(writer, "{any}", .{x}) catch {},
         .str => |x| std.fmt.format(writer, "{s}", .{x}) catch {},
         .callable => |x| std.fmt.format(writer, "{s}", .{x.toString()}) catch {},
         .function => |x| std.fmt.format(writer, "{s}", .{x.toString()}) catch {},
+        .ret => |x| std.fmt.format(writer, "{any}", .{x.toValue()}) catch {},
     }
 }
 
-pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Expr.Value {
-    root.log_fn("execute", "{}", .{stmt}, writer);
+pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
+    var out: ?Value = null;
 
     switch (stmt.*) {
         .block => |statements| {
@@ -214,11 +196,9 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Expr.Value {
             var environment = Environment.initEnclosing(previous, self.allocator);
             self.environment = &environment;
 
-            for (statements) |*statement|
-                _ = try self.execute(statement, writer);
+            for (statements) |*statement| _ = try self.execute(statement, writer);
         },
-        .break_stmt => |break_stmt| {
-            _ = break_stmt;
+        .break_stmt => |_| {
             @panic("Unimplemented");
         },
         .expr => |expr| {
@@ -227,51 +207,66 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Expr.Value {
         .if_stmt => |if_stmt| {
             _ = if (isTruthy(try self.evaluate(if_stmt.condition)))
                 try self.execute(if_stmt.then_branch, writer)
-            else if (if_stmt.else_branch) |eb|
-                try self.execute(eb, writer);
+            else if (if_stmt.else_branch) |else_branch|
+                try self.execute(else_branch, writer);
         },
         .function => |fun| {
-            const res = try functionCtxCallable(self.allocator, fun); // A new env was created that is local to function call site and current is defer assigned back after it returns.
-            // std.log.debug("here in .function -> res: {any}", .{res});
-            try self.environment.define(fun.name.lexeme, .{ .function = res });
+            const function: *LoxFunction = try functionCtxCallable(self.allocator, fun);
+            try self.environment.define(fun.name.lexeme, .{ .function = function });
         },
         .print => |expr| {
-            // std.log.debug("here in .print -> res: {any}", .{expr});
             printValue(writer, try self.evaluate(expr));
             writer.writeByte('\n') catch return error.IoError; // multi-line
+        },
+        .return_stmt => |return_stmt| {
+            // If we have a return value, we evaluate it, otherwise, we use nil.
+            // Then we take that value and wrap it in a custom exception class and
+            // throw it. We want this to unwind all the way to where the function
+            // call began, the call() method in LoxFunction.
+            const value: ?Value = if (return_stmt.value) |val| try self.evaluate(val) else null;
+            const val: Expr.LoxReturnValue = Expr.LoxReturnValue.fromValue(value);
+            const ret = try self.allocator.create(Expr.LoxReturnValue);
+            errdefer self.allocator.destroy(ret);
+            ret.* = val;
+            const ret_val: Value = .{ .ret = ret };
+            // eval again? due to union Value and return a valid Value that is not a return type, since it is redundant after executing????
+            // also how are we unwinding to the call stack?
+            std.log.debug("Interpreter.zig: in execute(): .return_stmt => |return_stmt|: {any}, ret_val: {any}", .{ return_stmt, ret_val });
+            out = ret_val;
         },
         .var_stmt => |var_stmt| {
             const value = if (var_stmt.initializer) |expr| try self.evaluate(expr) else Value.Nil;
             try self.environment.define(var_stmt.name.lexeme, value);
+            // break :blk value;
         },
-        .while_stmt => |while_stmt| { // similar to If visit method
+        .while_stmt => |while_stmt| {
             while (isTruthy(try self.evaluate(while_stmt.condition))) {
                 _ = try self.execute(while_stmt.body, writer);
             }
         },
     }
 
-    return Value.Nil;
+    std.log.debug("about to return from execute() with out: {any}", .{out});
+    return if (out) |x| x else Value.Nil;
 }
 
 /// Visit methods do a **post-order traversal**—each node evaluates its
 /// children before doing its own work.
 fn evaluate(self: *Self, expr: *Expr) Error!Expr.Value {
-    root.log_fn("evaluate", "{}", .{expr}, std.io.getStdOut().writer());
-
     return switch (expr.*) {
+        // Recursively evaluate "rhs" -> get value, and store in named variable
         // Similar to variable declarations in `execute() => .var_stmt`:
         // Key change: assignment not allowed to create a new variable.
         .assign => |assign| blk: {
-            const value = try self.evaluate(assign.value); // Recursively evaluate "rhs" -> get value, and store in named variable
+            const value = try self.evaluate(assign.value);
             self.environment.assign(assign.name, value) catch |err| {
                 undeclared_token = assign.name;
-                break :blk err; // key doesn't already exist in environments's variable map
+                // key doesn't already exist in environments's variable map
+                break :blk err;
             };
             break :blk value;
         },
         .binary => |binary| try self.visitBinaryExpr(binary),
-
         // First, we evaluate the expression for the callee. Typically, this
         // expression is just an identifier that looks up the function by its
         // name, but it could be anything. Then we evaluate each of the
@@ -298,22 +293,18 @@ fn evaluate(self: *Self, expr: *Expr) Error!Expr.Value {
         .call => |call| blk: {
             const callee = try self.evaluate(call.callee);
 
-            // Discards the function-local environment and restores the previous one
+            // Discards the call-local environment and restores the previous one
             // that was active back at the callsite.
             const previous_environment = self.environment;
             defer self.environment = previous_environment;
             var environment = Environment.initEnclosing(previous_environment, self.allocator);
-            errdefer environment.deinit(); // Unimplemented
+            errdefer environment.deinit(); // @Unimplemented
             self.environment = &environment;
 
             var arguments = std.ArrayList(Expr.Value).init(self.allocator);
             errdefer arguments.deinit();
+            for (call.arguments) |argument| try arguments.append(try self.evaluate(argument));
 
-            for (call.arguments) |argument| {
-                try arguments.append(try self.evaluate(argument));
-            }
-
-            // FIXME: I think we need to return functions rather than calling then in evaluate!
             const args = try arguments.toOwnedSlice();
             switch (callee) {
                 .callable => |callable| { // native fn
@@ -328,9 +319,6 @@ fn evaluate(self: *Self, expr: *Expr) Error!Expr.Value {
                         runtime_token = call.paren;
                         break :blk error.WrongArity;
                     }
-                    // self.context when?
-                    //      LoxCallable function = (LoxCallable)callee;
-                    //      return function.call(this, arguments);
                     break :blk function.call(self, args);
                 },
                 else => {
@@ -338,7 +326,6 @@ fn evaluate(self: *Self, expr: *Expr) Error!Expr.Value {
                     break :blk error.NotCallable;
                 },
             }
-            unreachable; // just in case
         },
         .grouping => |group| try self.evaluate(group),
         .literal => |literal| switch (literal) {
@@ -380,8 +367,12 @@ pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!vo
         assert(self.environment.values.count() == 0);
     }
 
+    var outputs = std.ArrayList(Value).init(self.allocator);
+    errdefer outputs.deinit();
     for (stmts) |*stmt| {
-        _ = self.execute(stmt, writer) catch |err|
-            return handleRuntimeError(err);
+        const out = self.execute(stmt, writer) catch |err| return handleRuntimeError(err);
+        std.log.debug("interpreter.zig:in interpret(): out: {any}", .{out});
+        try outputs.append(out);
     }
+    std.log.debug("interpreter.zig:in interpret(): outputs: {any}, outputs<slice>: {any}", .{ outputs, try outputs.toOwnedSlice() });
 }

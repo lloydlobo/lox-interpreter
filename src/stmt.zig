@@ -18,6 +18,7 @@ const debug = @import("debug.zig");
 ///                  | block ;
 pub const Stmt = union(enum) {
     break_stmt: ?*Expr,
+    return_stmt: Return,
     expr: *Expr,
     if_stmt: If, // → "if" "(" expression ")" statement ( "else" statement )? ;
     print: *Expr,
@@ -25,6 +26,11 @@ pub const Stmt = union(enum) {
     while_stmt: While,
     block: []Stmt,
     function: Function,
+
+    pub const Return = struct {
+        keyword: Token,
+        value: ?*Expr,
+    };
 
     /// "If         : Expr condition, Stmt thenBranch," + " Stmt elseBranch",
     ///

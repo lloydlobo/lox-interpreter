@@ -1,9 +1,10 @@
 //! See https://craftinginterpreters.com/appendix-ii.html#expressions
 
 const std = @import("std");
+const assert = std.debug.assert;
 
 const Interpreter = @import("interpreter.zig");
-const Obj = @import("object.zig").Obj;
+// const Obj = @import("object.zig").Obj;
 const Token = @import("token.zig");
 const formatNumber = @import("root.zig").formatNumber;
 
@@ -45,13 +46,36 @@ pub const Expr = union(enum) {
         right: *Expr,
     };
 
+    // pub const LoxReturn = union(enum) {
+    //     Nil: Value.Nil,
+    //     Ret: Value,
+    // };
+    pub const LoxReturnValue = union(enum) {
+        nil: void,
+        ret: Value,
+
+        pub fn fromValue(value: ?Value) LoxReturnValue {
+            return if (value) |v| switch (v) {
+                .nil => .{ .ret = Value.Nil },
+                else => |x| .{ .ret = x },
+            } else .{ .ret = Value.Nil };
+        }
+
+        pub fn toValue(self: *LoxReturnValue) Value {
+            return switch (self.*) {
+                .nil => Value.Nil,
+                .ret => |x| x,
+            };
+        }
+    };
+
     pub const Value = union(enum) {
         bool: bool,
         callable: *LoxCallable,
         function: *LoxFunction,
         nil: void,
         num: f64,
-        obj: *Obj,
+        ret: *LoxReturnValue,
         str: []const u8,
 
         pub const Nil = Value{ .nil = {} };
@@ -109,11 +133,11 @@ pub const Expr = union(enum) {
             }
         };
 
-        pub fn isObj(self: Value) bool {
-            // See https://github.com/raulgrell/zox/blob/master/src/value.zig#L46
-            // See https://github.com/raulgrell/zox/blob/master/src/value.zig#L250
-            return self == .obj;
-        }
+        // pub fn isObj(self: Value) bool {
+        //     // See https://github.com/raulgrell/zox/blob/master/src/value.zig#L46
+        //     // See https://github.com/raulgrell/zox/blob/master/src/value.zig#L250
+        //     return self == .obj;
+        // }
 
         // See https://gitlab.com/andreyorst/lox/-/blob/main/src/zig/lox/value.zig?ref_type=heads#L253
         pub inline fn from(x: anytype) Value {
@@ -121,7 +145,7 @@ pub const Expr = union(enum) {
                 usize, i32, comptime_int => Value{ .num = @as(f64, @floatFromInt(x)) },
                 f64, comptime_float => Value{ .num = x },
                 void => Nil,
-                *Obj => Value{ .obj = x },
+                // *Obj => Value{ .obj = x },
                 else => unreachable,
             };
         }
@@ -129,11 +153,11 @@ pub const Expr = union(enum) {
         pub fn format(self: Value, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             switch (self) {
                 .bool => |val| try std.fmt.format(writer, "{}", .{val}),
-                .nil => try std.fmt.format(writer, "nil", .{}),
-                .num => |val| try formatNumber(writer, val),
-                .obj => |obj| try obj.print(writer),
                 .callable => |val| try std.fmt.format(writer, "{any}", .{val}),
                 .function => |val| try std.fmt.format(writer, "{any}", .{val}),
+                .nil => try std.fmt.format(writer, "nil", .{}),
+                .num => |val| try formatNumber(writer, val),
+                .ret => |val| try std.fmt.format(writer, "{any}", .{val}),
                 .str => |val| try std.fmt.format(writer, "{s}", .{val}),
             }
         }

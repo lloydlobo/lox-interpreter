@@ -53,12 +53,8 @@ fn createStmt(self: *Parser, value: Stmt) Allocator.Error!*Stmt {
 
 fn parseError(token: Token, comptime message: []const u8) Error {
     tokenError(token, message);
-    return error.ParseError;
-}
 
-fn ioError(token: Token, comptime message: []const u8, args: anytype) Error {
-    std.debug.print("{0s}\n[line {1any} {2d}]\n", .{ message, args, token.line });
-    return error.IoError;
+    return error.ParseError;
 }
 
 // match is short for consumeToken()
@@ -72,10 +68,7 @@ fn match(self: *Parser, types: anytype) bool {
 }
 
 fn consume(self: *Parser, @"type": Token.Type, comptime message: []const u8) Error!Token {
-    return if (self.check(@"type"))
-        self.advance()
-    else
-        parseError(self.peek(), message);
+    return if (self.check(@"type")) self.advance() else parseError(self.peek(), message);
 }
 
 fn currentType(self: *const Parser) Token.Type {
@@ -104,21 +97,25 @@ fn advance(self: *Parser) Token {
 
 fn peek(self: *Parser) Token {
     assert(self.current >= 0); // undefined implementaion logic if called when current index is 0
+
     return self.tokens.get(self.current);
 }
 
 fn previous(self: *Parser) Token {
     assert(self.current > 0);
+
     return self.tokens.get(self.current - 1);
 }
 
 fn previousLiteral(self: *Parser) ?Token.Literal {
     assert(self.current > 0);
+
     return self.tokens.items(.literal)[self.current - 1];
 }
 
 fn previousType(self: *Parser) Token.Type {
     assert(self.current > 0);
+
     return self.tokens.items(.type)[self.current - 1];
 }
 
@@ -135,23 +132,16 @@ fn previousValue(self: *Parser) Expr.Value {
 
 /// primary → NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" ;
 fn primary(self: *Parser) Error!*Expr {
-    if (self.match(.{.false}))
-        return try self.createExpr(.{ .literal = .{ .bool = false } });
-    if (self.match(.{.true}))
-        return try self.createExpr(.{ .literal = .{ .bool = true } });
-    if (self.match(.{.nil}))
-        return try self.createExpr(.{ .literal = .{ .nil = {} } });
-    if (self.match(.{ .number, .string }))
-        return try self.createExpr(.{ .literal = self.previousValue() });
-    // grouping precedence - recursion: primary() |> expression()
-    if (self.match(.{.left_paren})) { //`(`
+    if (self.match(.{.false})) return try self.createExpr(.{ .literal = .{ .bool = false } });
+    if (self.match(.{.true})) return try self.createExpr(.{ .literal = .{ .bool = true } });
+    if (self.match(.{.nil})) return try self.createExpr(.{ .literal = .{ .nil = {} } });
+    if (self.match(.{ .number, .string })) return try self.createExpr(.{ .literal = self.previousValue() });
+    if (self.match(.{.left_paren})) { //`(` grouping precedence - recursion: primary() |> expression()
         const expr = try self.expression();
         _ = try self.consume(.right_paren, "Expect ')' after expression."); //`)`
         return try self.createExpr(.{ .grouping = expr });
-    }
-    // variable precedence: from declaration() |> primary()
-    if (self.match(.{.identifier}))
-        return try self.createExpr(.{ .variable = self.previous() });
+    } // variable precedence: from declaration() |> primary()
+    if (self.match(.{.identifier})) return try self.createExpr(.{ .variable = self.previous() });
 
     return parseError(self.peek(), "Expect expression.");
 }
@@ -160,24 +150,26 @@ fn finishCall(self: *Parser, callee: *Expr) Error!*Expr {
     var arguments = std.ArrayList(*Expr).init(self.allocator);
     errdefer arguments.deinit();
 
-    var argcount: u8 = 0; // See https://github.com/jwmerrill/zig-lox/blob/main/src/compiler.zig#L1005
+    var argcount: u8 = 0;
     if (!self.check(.right_paren)) {
-        while (true) {
-            try arguments.append(try self.expression());
+        var do = true;
+        while (do or self.match(.{.comma})) {
+            do = false;
+            argcount += 1; // defer?
 
-            defer argcount += 1;
-            if (argcount == 255)
-                return parseError(self.peek(), "Cannot have more than 255 arguments.");
-            if (!self.match(.{.comma})) break;
+            try arguments.append(try self.expression());
+            if (argcount == 255) return parseError(self.peek(), "Cannot have more than 255 arguments.");
         }
     }
 
     const paren = try self.consume(.right_paren, "Expect ')' after arguments.");
-    return self.createExpr(.{ .call = .{
+    const expr = self.createExpr(.{ .call = .{
         .callee = callee,
         .paren = paren,
         .arguments = try arguments.toOwnedSlice(),
     } });
+
+    return expr;
 }
 
 // Similar to how we parse infix operators. First, we parse a primary
@@ -187,6 +179,7 @@ fn finishCall(self: *Parser, callee: *Expr) Error!*Expr {
 // expr and we loop to see if the result is itself called.
 fn call(self: *Parser) Error!*Expr {
     var expr = try self.primary();
+
     while (true) {
         if (self.match(.{.left_paren})) {
             expr = try self.finishCall(expr);
@@ -202,7 +195,10 @@ fn unary(self: *Parser) Error!*Expr {
         const operator = self.previous();
         const right = try self.unary(); // recursion to same precedence level
 
-        return try self.createExpr(.{ .unary = .{ .operator = operator, .right = right } });
+        return try self.createExpr(.{ .unary = .{
+            .operator = operator,
+            .right = right,
+        } });
     }
 
     return try self.call(); // ...previously jump to `primary()`
@@ -215,7 +211,11 @@ fn factor(self: *Parser) Error!*Expr {
     while (self.match(.{ .slash, .star })) {
         const operator = self.previous();
         const right = try self.unary();
-        expr = try self.createExpr(.{ .binary = .{ .left = expr, .operator = operator, .right = right } });
+        expr = try self.createExpr(.{ .binary = .{
+            .left = expr,
+            .operator = operator,
+            .right = right,
+        } });
     }
 
     return expr;
@@ -228,7 +228,11 @@ fn term(self: *Parser) Error!*Expr {
     while (self.match(.{ .minus, .plus })) {
         const operator = self.previous();
         const right = try self.factor();
-        expr = try self.createExpr(.{ .binary = .{ .left = expr, .operator = operator, .right = right } });
+        expr = try self.createExpr(.{ .binary = .{
+            .left = expr,
+            .operator = operator,
+            .right = right,
+        } });
     }
 
     return expr;
@@ -240,7 +244,11 @@ fn comparison(self: *Parser) Error!*Expr {
     while (self.match(.{ .greater, .greater_equal, .less, .less_equal })) {
         const operator = self.previous();
         const right = try self.term();
-        expr = try self.createExpr(.{ .binary = .{ .left = expr, .operator = operator, .right = right } });
+        expr = try self.createExpr(.{ .binary = .{
+            .left = expr,
+            .operator = operator,
+            .right = right,
+        } });
     }
 
     return expr;
@@ -253,7 +261,11 @@ fn equality(self: *Parser) Error!*Expr {
     while (self.match(.{ .bang_equal, .equal_equal })) {
         const operator = self.previous();
         const right = try self.comparison();
-        expr = try self.createExpr(.{ .binary = .{ .left = expr, .operator = operator, .right = right } });
+        expr = try self.createExpr(.{ .binary = .{
+            .left = expr,
+            .operator = operator,
+            .right = right,
+        } });
     }
 
     return expr;
@@ -266,7 +278,11 @@ fn andExpr(self: *Parser) Error!*Expr {
     while (self.match(.{.@"and"})) {
         const operator = self.previous();
         const right = try self.equality();
-        expr = try self.createExpr(.{ .logical = .{ .left = expr, .operator = operator, .right = right } });
+        expr = try self.createExpr(.{ .logical = .{
+            .left = expr,
+            .operator = operator,
+            .right = right,
+        } });
     }
 
     return expr;
@@ -280,7 +296,11 @@ fn orExpr(self: *Parser) Error!*Expr {
     while (self.match(.{.@"or"})) {
         const operator = self.previous();
         const right = try self.andExpr();
-        expr = try self.createExpr(.{ .logical = .{ .left = expr, .operator = operator, .right = right } });
+        expr = try self.createExpr(.{ .logical = .{
+            .left = expr,
+            .operator = operator,
+            .right = right,
+        } });
     }
 
     return expr;
@@ -320,7 +340,10 @@ fn assignment(self: *Parser) Error!*Expr {
         // it is - **just before we create** the assignment expression node!
         return switch (expr.*) {
             // This conversion works as every valid assignment target happens to also be valid syntax as a normal expression.
-            .variable => |name| try self.createExpr(.{ .assign = .{ .name = name, .value = value } }),
+            .variable => |name| try self.createExpr(.{ .assign = .{
+                .name = name,
+                .value = value,
+            } }),
 
             // We report an error if the left-hand side isn’t a valid
             // assignment target, but we don’t throw it because the parser
@@ -403,23 +426,25 @@ fn ifStatement(self: *Parser) Error!Stmt {
     _ = try self.consume(.left_paren, "Expect '(' after 'if'.");
     const condition = try self.expression();
     _ = try self.consume(.right_paren, "Expect ')' after if condition.");
-
-    return .{ .if_stmt = .{
+    const stmt: Stmt = .{ .if_stmt = .{
         .condition = condition,
         .then_branch = try self.createStmt(try self.statement()),
         .else_branch = if (self.match(.{.@"else"})) try self.createStmt(try self.statement()) else null,
     } };
+
+    return stmt;
 }
 
 fn whileStatement(self: *Parser) Error!Stmt {
     _ = try self.consume(.left_paren, "Expect '(' after 'while'.");
     const condition = try self.expression();
     _ = try self.consume(.right_paren, "Expect ')' after condition.");
-
-    return .{ .while_stmt = .{
+    const stmt: Stmt = .{ .while_stmt = .{
         .condition = condition,
         .body = try self.createStmt(try self.statement()),
     } };
+
+    return stmt;
 }
 
 // for_stmt → "for" "(" ( varDecl | exprStmt | ";" ) expression? ";" expression? ")"
@@ -435,25 +460,18 @@ fn forStatement(self: *Parser) Error!Stmt {
     _ = try self.consume(.left_paren, "Expect '(' after 'for'.");
 
     // Clause 1
-    const initializer = if (self.match(.{.semicolon}))
-        null // no initializer
-    else if (self.match(.{.@"var"}))
-        try self.varDeclaration()
-    else
-        try self.expressionStatement();
+    const initializer = blk: {
+        break :blk if (self.match(.{.semicolon})) null // no initializer
+        else if (self.match(.{.@"var"})) try self.varDeclaration() // variable
+        else try self.expressionStatement();
+    };
 
     // Clause 2
-    var condition = if (!self.check(.semicolon))
-        try self.expression()
-    else
-        null;
+    var condition = if (!self.check(.semicolon)) try self.expression() else null;
     _ = try self.consume(.semicolon, "Expect ';' after loop condition.");
 
     // Clause 3
-    const increment = if (!self.check(.right_paren))
-        try self.expression()
-    else
-        null;
+    const increment = if (!self.check(.right_paren)) try self.expression() else null;
     _ = try self.consume(.right_paren, "Expect ')' after for clauses.");
 
     var body: *Stmt = try self.createStmt(try self.statement());
@@ -498,12 +516,22 @@ fn breakStatement(self: *Parser) Error!Stmt {
     const value: ?*Expr = if (is_with_label) try self.expression() else null;
     _ = try self.consume(.semicolon, "Expect ';' after 'break'.");
 
-    return .{ .break_stmt = value };
+    const stmt: Stmt = .{ .break_stmt = value };
+
+    return stmt;
 }
 
 fn returnStatement(self: *Parser) Error!Stmt {
-    _ = self;
-    @panic("Unimplemented");
+    const keyword = self.previous();
+    const value: ?*Expr = if (!self.check(.semicolon)) try self.expression() else null;
+    _ = try self.consume(.semicolon, "Expect ';' after return value.");
+
+    const stmt: Stmt = .{ .return_stmt = .{
+        .keyword = keyword,
+        .value = value,
+    } };
+
+    return stmt;
 }
 
 // If the next token doesn’t look like any known kind of statement, we
@@ -512,10 +540,11 @@ fn returnStatement(self: *Parser) Error!Stmt {
 fn statement(self: *Parser) Error!Stmt {
     if (self.match(.{.@"if"})) return self.ifStatement();
     if (self.match(.{.@"for"})) return self.forStatement();
+    if (self.match(.{.print})) return self.printStatement();
+    if (self.match(.{.@"return"})) return self.returnStatement();
     if (self.match(.{.@"while"})) return self.whileStatement();
     if (self.match(.{.left_brace})) return .{ .block = try self.block() };
     if (self.match(.{.@"break"})) return self.breakStatement();
-    if (self.match(.{.print})) return self.printStatement();
     return self.expressionStatement(); // finally identifier
 }
 
@@ -524,11 +553,12 @@ fn varDeclaration(self: *Parser) Error!Stmt {
     const name = try self.consume(.identifier, "Expect variable name.");
     const value = if (self.match(.{.equal})) try self.expression() else null;
     _ = try self.consume(.semicolon, "Expect ';' after variable declaration.");
-
-    return .{ .var_stmt = .{
+    const stmt: Stmt = .{ .var_stmt = .{
         .name = name,
         .initializer = value,
     } };
+
+    return stmt;
 }
 
 fn fnDeclaration(self: *Parser, comptime kind: []const u8) Error!Stmt {
@@ -603,12 +633,10 @@ pub fn parse(self: *Parser) Allocator.Error![]Stmt {
 
     return try statements.toOwnedSlice();
 }
-// }; // end of Parser
 
-//see prerequisites: https://craftinginterpreters.com/representing-code.html
+// See prerequisites: https://craftinginterpreters.com/representing-code.html
 //
-//see also: https://craftinginterpreters.com/parsing-expressions.html#recursive-descent-parsing
-//
+// See also: https://craftinginterpreters.com/parsing-expressions.html#recursive-descent-parsing
 // It’s called “recursive descent” because it walks down the grammar.
 // Confusingly, we also use direction metaphorically when talking about “high”
 // and “low” precedence, but the orientation is reversed. In a top-down parser,

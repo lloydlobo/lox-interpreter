@@ -15,10 +15,6 @@ const runtimeError = @import("main.zig").runtimeError;
 const root = @import("root.zig");
 const Stmt = @import("stmt.zig").Stmt;
 
-// pub const FunctionContext = struct {
-//     allocator: Allocator,
-//     declaration: Stmt.Function,
-// };
 pub const FunctionContext = struct {
     allocator: Allocator,
     declaration: Stmt.Function,
@@ -44,19 +40,26 @@ fn callCtxFn(context: *anyopaque, interpreter: *Interpreter, arguments: []Value)
         };
     }
 
-    const value = interpreter.execute(&block, root.stdout().writer()) catch |err| {
+    const writer = root.stdout().writer();
+    const result: Value = interpreter.execute(&block, writer) catch |err| blk: {
         root.eprint("Error in function: '{s}': ", .{ctx.declaration.name.lexeme});
-        handleRuntimeError(err) catch |e|
-            root.exit(@intFromEnum(ErrorCode.runtime_error), "Failed to call handleRuntimeError: {any}.", .{e});
-        return Value.Nil;
+        handleRuntimeError(err) catch |e| root.exit(@intFromEnum(ErrorCode.runtime_error), "Failed to call handleRuntimeError: {any}.", .{e});
+        break :blk Value.Nil;
     };
 
-    const __return_enabled = false;
-    if (__return_enabled) {
-        return value;
-    } else {
-        return Value.Nil;
-    }
+    const ret: Value = switch (result) {
+        .ret => |ret| blk: {
+            std.log.debug("loxfunction.zig: in callCtxFn(): .ret => ret: {any}\n", .{ret});
+            break :blk ret.*.ret;
+        },
+        else => blk: {
+            std.log.debug("loxfunction.zig: in callCtxFn(): else => result: {any}", .{result});
+            break :blk Value.Nil;
+        },
+    };
+    std.log.debug("loxfunction.zig: in callCtxFn(): result: {any}, ret {any}", .{ result, ret });
+
+    return ret;
 }
 
 fn toStringCtxFn(context: *anyopaque) []const u8 {
