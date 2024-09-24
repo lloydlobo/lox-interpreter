@@ -115,10 +115,11 @@ pub const Expr = union(enum) {
         //             verifyContext(Context, K, K, u64, false);
         //         }
         pub const LoxFunction = struct {
+            context: *anyopaque, // Context pointer to hold function-specific data. e.g. `FunctionContext`
+
             arityFn: *const fn (*anyopaque) usize,
             callFn: *const fn (*anyopaque, *Interpreter, []Value) Value,
             toStringFn: *const fn (*anyopaque) []const u8,
-            context: *anyopaque, // Context pointer to hold function-specific data. e.g. `FunctionContext`
 
             pub fn arity(self: *LoxFunction) usize {
                 return self.arityFn(self.context);

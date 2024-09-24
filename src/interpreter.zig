@@ -229,7 +229,7 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
                 try self.execute(else_branch, writer);
         },
         .function => |fun| {
-            const function: *LoxFunction = try functionCtxCallable(self.allocator, fun);
+            const function: *LoxFunction = try functionCtxCallable(self.allocator, fun, self.environment);
             try self.environment.define(fun.name.lexeme, .{ .function = function });
         },
         .print => |expr| {

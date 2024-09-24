@@ -18,12 +18,11 @@ const Stmt = @import("stmt.zig").Stmt;
 
 pub const FunctionContext = struct {
     allocator: Allocator,
+    closure: *Environment,
     declaration: Stmt.Function,
-    // closure: *Environment,
 
     pub fn handleRuntimeError(self: *FunctionContext, err: Interpreter.Error) void {
         root.eprint("Error in function context: '{s}': ", .{self.declaration.name.lexeme});
-
         Interpreter.handleRuntimeError(err) catch |e| {
             root.exit(@intFromEnum(ErrorCode.runtime_error), "{any}.", .{e});
         };
@@ -82,21 +81,27 @@ fn toStringCtxFn(context: *anyopaque) []const u8 {
     return buf;
 }
 
-pub fn functionCtxCallable(allocator: Allocator, declaration: Stmt.Function) Allocator.Error!*LoxFunction {
+pub fn functionCtxCallable(
+    allocator: Allocator,
+    declaration: Stmt.Function,
+    closure: *Environment,
+) Allocator.Error!*LoxFunction {
     const context = try allocator.create(FunctionContext);
     errdefer allocator.destroy(context);
     context.* = .{
         .allocator = allocator,
+        .closure = closure,
         .declaration = declaration,
     };
 
     const out = try allocator.create(LoxFunction);
     errdefer allocator.destroy(out);
     out.* = LoxFunction{
+        .context = context, //> `*Context` casted to `*anyopaque`
+
         .arityFn = arityCtxFn,
         .callFn = callCtxFn,
         .toStringFn = toStringCtxFn,
-        .context = context, //> `*Context` cast to `*anyopaque`
     };
 
     return out;
