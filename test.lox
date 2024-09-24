@@ -1,15 +1,36 @@
 // test.lox
 
-fun hello() {
+
+if (true) {
+    print "Functions - Return Statement";
+    fun hello() {
+        print hello;
+        var out = "hello(): from lox, ( return out )";
+        return out;
+    }
     print hello;
-    var out = "hello(): from lox, ( return out )";
-    return out;
+    var ret = hello();
+    print ret;
+    print hello;
+    // hello();
 }
-print hello;
-var ret = hello();
-print ret;
-print hello;
-// hello();
+
+if (false) {
+
+}
+    print "Functions - Closures";
+    fun makeCounter() {
+        var i = 0;
+        fun count() {
+            i = i + 1; // Error in function context: 'count': Undefined variable 'i'.
+            print i;   // [line 23]
+        }
+
+        return count;
+    }
+    var counter = makeCounter();
+    counter(); // "1".
+    counter(); // "2".
 
 
 //  if (true) {

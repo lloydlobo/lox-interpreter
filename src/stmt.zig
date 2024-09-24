@@ -8,87 +8,67 @@ const Expr = @import("expr.zig").Expr;
 const Token = @import("token.zig");
 const debug = @import("debug.zig");
 
-/// statement        → expr
-///                  | break_stmt
-///                  | for_stmt
-///                  | if_stmt
-///                  | print
-///                  | var_stmt
-///                  | while_stmt
-///                  | block ;
+/// `statement → block | break_stmt | expr_stmt | for_stmt | if_stmt | print_stmt | var_stmt | while_stmt  ;`
 pub const Stmt = union(enum) {
+    block: []Stmt,
     break_stmt: ?*Expr,
+    expr_stmt: *Expr,
+    function: Function,
+    /// "if" "(" expression ")" statement ( "else" statement )? ;
+    if_stmt: If,
+    print_stmt: *Expr,
     return_stmt: Return,
-    expr: *Expr,
-    if_stmt: If, // → "if" "(" expression ")" statement ( "else" statement )? ;
-    print: *Expr,
     var_stmt: Var,
     while_stmt: While,
-    block: []Stmt,
-    function: Function,
+
+    /// Converts union value to a string literal representing the name.
+    pub fn toString(self: Stmt) []const u8 {
+        return @tagName(self);
+    }
+
+    pub const Function = struct { // should implement Callable
+        body: []Stmt, // allocate separately?
+        name: Token,
+        parameters: []Token,
+
+        pub fn create(allocator: Allocator) !*Function {
+            const self = try allocator.create(Function);
+            errdefer allocator.destroy(self);
+            if (comptime debug.is_trace_garbage_collector)
+                std.log.debug("{} allocate {} for {s}", .{
+                    @intFromPtr(&self),
+                    @sizeOf(Function),
+                    @typeName(Function),
+                });
+
+            return self;
+        }
+    };
+
+    /// "If  : Expr condition, Stmt thenBranch," + " Stmt elseBranch",
+    pub const If = struct {
+        condition: *Expr,
+        // See [dangling else problem](https://en.wikipedia.org/wiki/Dangling_else).
+        // Solution: " `else` is bound to the nearest `if` that precedes it. "
+        // See https://craftinginterpreters.com/appendix-ii.html#if-statement
+        else_branch: ?*Stmt,
+        then_branch: *Stmt,
+    };
 
     pub const Return = struct {
         keyword: Token,
         value: ?*Expr,
     };
 
-    /// "If         : Expr condition, Stmt thenBranch," + " Stmt elseBranch",
-    ///
-    // since else clauses are optional, and there is no explicit delimiter
-    // marking the end of the if statement, the grammar is ambiguous when you
-    // nest ifs in this way ─ This classic syntax pitfall is the [dangling else
-    // problem](https://en.wikipedia.org/wiki/Dangling_else).
-    // Solution: " `else` is bound to the nearest `if` that precedes it. "
-    // See https://craftinginterpreters.com/appendix-ii.html#if-statement
-    pub const If = struct {
-        condition: *Expr,
-        then_branch: *Stmt,
-        else_branch: ?*Stmt,
-    };
-
     pub const Var = struct {
-        name: Token,
         initializer: ?*Expr,
+        name: Token,
     };
 
     pub const While = struct {
-        condition: *Expr,
         body: *Stmt,
+        condition: *Expr,
     };
-
-    pub const Function = struct { // should implement Callable
-        name: Token,
-        parameters: []Token,
-        body: []Stmt, // allocate separately?
-
-        pub fn create(allocator: Allocator) !*Function {
-            const self = try allocator.create(Function);
-            if (comptime debug.is_trace_gc)
-                std.log.debug("{} allocate {} for {s}", .{ @intFromPtr(&self), @sizeOf(Function), @typeName(Function) });
-
-            return self;
-        }
-
-        pub fn destroy(self: *Function, vm: *anyopaque) void {
-            self.chunk.deinit();
-            vm.allocator.destroy(self);
-        }
-    };
-
-    /// Converts an enum value or union value to a string literal representing
-    /// the name. If the enum is non-exhaustive and the tag value does not map to a
-    /// name, it invokes safety-checked [Undefined Behavior](https://ziglang.org/documentation/0.13.0/#Undefined-Behavior).
-    pub fn toString(self: Stmt) []const u8 {
-        return @tagName(self);
-    }
-
-    // const t = @typeInfo(Stmt);
-    // if (t == .Union) {
-    //     const info = t.Union;
-    //     inline for (info.fields) |field| {
-    //         std.log.debug("{s} {any} {any}", .{ field.name, field.type, field.alignment });
-    //     }
-    // }
 };
 
 // See https://craftinginterpreters.com/appendix-ii.html#statements

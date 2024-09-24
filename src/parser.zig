@@ -391,14 +391,14 @@ fn printStatement(self: *Parser) Error!Stmt {
     const value = try self.expression();
     _ = try self.consume(.semicolon, "Expect ';' after value.");
 
-    return .{ .print = value };
+    return .{ .print_stmt = value };
 }
 
 fn expressionStatement(self: *Parser) Error!Stmt {
     const value: *Expr = try self.expression(); //> (*Expr) union(enum)
     _ = try self.consume(.semicolon, "Expect ';' after expression.");
 
-    return .{ .expr = value };
+    return .{ .expr_stmt = value };
 }
 
 // nb. Having block() return the raw list of statements and leaving it to
@@ -481,7 +481,8 @@ fn forStatement(self: *Parser) Error!Stmt {
         if (increment) |expr| {
             var list = std.ArrayList(Stmt).init(self.allocator);
             errdefer list.deinit();
-            try list.appendSlice(&[_]Stmt{ body.*, .{ .expr = expr } });
+
+            try list.appendSlice(&[_]Stmt{ body.*, .{ .expr_stmt = expr } });
             body = try self.createStmt(.{ .block = try list.toOwnedSlice() });
         }
 

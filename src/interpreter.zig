@@ -1,7 +1,7 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const mem = std.mem;
 const Allocator = mem.Allocator;
-const assert = std.debug.assert;
 
 const debug = @import("debug.zig");
 const Environment = @import("environment.zig");
@@ -10,18 +10,19 @@ const Expr = @import("expr.zig").Expr;
 const Value = Expr.Value;
 const LoxCallable = Value.LoxCallable;
 const LoxFunction = Value.LoxFunction;
+const makeLoxFunction = @import("loxfunction.zig").makeLoxFunction;
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
 const root = @import("root.zig");
 const runtimeError = @import("main.zig").runtimeError;
-const functionCtxCallable = @import("loxfunction.zig").functionCtxCallable;
 
 const clockGlobalCallable: LoxCallable = .{
     // zig fmt: off
     .arityFn = struct {fn arity() usize {return 0;}}.arity,
-    .callFn = struct {fn call(_: *Interpreter, _: []Value) Value { 
-        return .{.num = (@as(f64, @floatFromInt(std.time.milliTimestamp())) / 1000.0)}; 
-    }}.call,
+    .callFn = struct {
+        fn call(_: *Interpreter, _: []Value) Value { 
+            return .{.num = (@as(f64, @floatFromInt(std.time.milliTimestamp())) / 1000.0)}; 
+        }}.call,
     .toStringFn = struct {fn toString() []const u8 {return "<native fn>";}}.toString,
     // zig fmt: on
 };
@@ -41,6 +42,7 @@ environment: *Environment,
 pub var runtime_error: Error = undefined;
 pub var runtime_return_value: Value = undefined;
 pub var runtime_token: Token = undefined;
+/// Key doesn't already exist in environments's variable map.
 pub var undeclared_token: Token = undefined;
 
 const Self = @This();
@@ -65,6 +67,8 @@ pub const Error = Allocator.Error || Environment.Error || RuntimeError || Propag
 pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
     var self: Interpreter = .{
         .allocator = allocator,
+
+        // See https://craftinginterpreters.com/functions.html#telling-time
         .environment = try Environment.init(allocator),
         .globals = try Environment.init(allocator),
     };
@@ -202,24 +206,51 @@ fn printValue(writer: anytype, value: Value) void {
     }
 }
 
+/// Internally discards the block-local environment and restores the previous
+/// one that was active back at the callsite.
+pub fn executeBlock(self: *Self, body: []Stmt, environment: ?*Environment, writer: anytype) Error!void {
+    if (environment) |env| {
+        const prev_env = self.environment;
+        defer {
+            // _ = self.environment.updateScopeDepth(.child_to_parent); // parent
+            self.environment = prev_env;
+        }
+        self.environment = env;
+        // _ = self.environment.updateScopeDepth(.parent_to_child); // child
+
+        for (body) |*statement| {
+            _ = try self.execute(statement, writer);
+        }
+    } else {
+        const prev_env = self.environment;
+        defer {
+            _ = self.environment.updateScopeDepth(.child_to_parent); // parent
+            self.environment = prev_env;
+        }
+        var curr_env = Environment.initEnclosing(self.allocator, prev_env);
+        self.environment = &curr_env;
+        _ = self.environment.updateScopeDepth(.parent_to_child); // child
+
+        for (body) |*statement| {
+            _ = try self.execute(statement, writer);
+        }
+    }
+}
+
 pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
     var out: ?Value = null;
 
-    switch (stmt.*) {
+    switch (stmt.*) { // Visit .****Stmt
+        // TODO: interpreter.executeBlock(declaration.body, environment); this
+        // is not same as interpreter.environment.
+        // See https://craftinginterpreters.com/functions.html#function-objects
         .block => |statements| {
-            // Discard that block-local environment and restores the
-            // previous one that was active back at the callsite.
-            const previous = self.environment;
-            defer self.environment = previous;
-            var environment = Environment.initEnclosing(previous, self.allocator);
-            self.environment = &environment;
-
-            for (statements) |*statement| _ = try self.execute(statement, writer);
+            _ = try self.executeBlock(statements, null, writer);
         },
         .break_stmt => |_| {
             @panic("Unimplemented");
         },
-        .expr => |expr| {
+        .expr_stmt => |expr| {
             _ = try self.evaluate(expr);
         },
         .if_stmt => |if_stmt| {
@@ -228,11 +259,19 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
             else if (if_stmt.else_branch) |else_branch|
                 try self.execute(else_branch, writer);
         },
-        .function => |fun| {
-            const function: *LoxFunction = try functionCtxCallable(self.allocator, fun, self.environment);
-            try self.environment.define(fun.name.lexeme, .{ .function = function });
+        // * When we create a LoxFunction, we capture the current environment.
+        // * This is the environment that is active when the function is declared
+        //   not when it’s called, which is what we want. It represents the
+        //   lexical scope surrounding the function declaration. Finally, when we
+        //   call the function, we use that environment as the call’s parent
+        //   instead of going straight to globals.
+        .function => |function| {
+            const fun = try makeLoxFunction(self.allocator, function, self.environment);
+            try self.environment.define(function.name.lexeme, .{
+                .function = fun,
+            });
         },
-        .print => |expr| {
+        .print_stmt => |expr| {
             printValue(writer, try self.evaluate(expr));
             writer.writeByte('\n') catch return error.IoError; // multi-line
         },
@@ -241,12 +280,13 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
         // throw it. We want this to unwind all the way to where the function
         // call began, the call() method in LoxFunction.
         .return_stmt => |return_stmt| {
+            // return_stmt.visit();
             const value: ?Value = if (return_stmt.value) |val| try self.evaluate(val) else null;
             var ret = Expr.LoxReturnValue.fromValue(value);
-            root.tracesrc(@src(), "prior to returning: ====[stmt, return_stmt, ret]: '{any}', '{any}', '{any}'====", .{ stmt.toString(), return_stmt, ret });
+            root.tracesrc(@src(), ".return_stmt: '{s}', '{any}', '{any}'====", .{ stmt.toString(), return_stmt, ret.toValue() });
 
             out = .{ .ret = &ret };
-            runtime_token = stmt.return_stmt.keyword;
+            runtime_token = return_stmt.keyword;
             runtime_return_value = ret.ret;
             runtime_error = error.Return;
             return error.Return;
@@ -270,67 +310,38 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
 /// children before doing its own work.
 fn evaluate(self: *Self, expr: *Expr) Error!Value {
     return switch (expr.*) {
-        // Recursively evaluate "rhs" -> get value, and store in named variable Similar to variable declarations in `execute() => .var_stmt`: Key change: assignment not allowed to create a new variable.
         .assign => |assign| blk: {
             const value = try self.evaluate(assign.value);
             self.environment.assign(assign.name, value) catch |err| {
                 undeclared_token = assign.name;
-                // key doesn't already exist in environments's variable map
                 break :blk err;
             };
             break :blk value;
         },
         .binary => |binary| try self.visitBinaryExpr(binary),
         .call => |call| blk: {
-            // * First, we evaluate the expression for the callee. Typically,
-            // this expression is just an identifier that looks up the function
-            // by its name, but it could be anything. Then we evaluate each of
-            // the argument expressions in order and store the resulting values
-            // in a list.
-            // * This is another one of those subtle semantic choices. Since
-            // argument expressions may have side effects, the order they are
-            // evaluated could be user visible. Even so, some languages like
-            // Scheme and C don’t specify an order. This gives compilers
-            // freedom to reorder them for efficiency, but means users may be
-            // unpleasantly surprised if arguments aren’t evaluated in the
-            // order they expect.
-            // * Further, this environment must be created dynamically. Each
-            // function call gets its own environment. Otherwise, recursion
-            // would break. If there are multiple calls to the same function in
-            // play at the same time, each needs its own environment, even
-            // though they are all calls to the same function.
-            // * That’s why we create a new environment at each call, not at
-            // the function declaration. The call() method we saw earlier does
-            // that. At the beginning of the call, it creates a new
-            // environment. Then it walks the parameter and argument lists in
-            // lockstep. For each pair, it creates a new variable with the
-            // parameter’s name and binds it to the argument’s value.
-            const callee: Value = try self.evaluate(call.callee);
-
-            // Discards the call-local environment and restores the previous one
-            // that was active back at the callsite.
-            const previous_environment = self.environment;
-            defer self.environment = previous_environment;
-            var environment = Environment.initEnclosing(previous_environment, self.allocator);
-            errdefer environment.deinit(); // @Unimplemented
+            // Each call needs a new environment for recursion and concurrency.
+            // call() creates environment, binds parameters, and executes.
+            const callee = try self.evaluate(call.callee);
+            const prev_environment = self.environment;
+            defer self.environment = prev_environment;
+            var environment = Environment.initEnclosing(self.allocator, prev_environment);
             self.environment = &environment;
-
             var arguments_list = std.ArrayList(Value).init(self.allocator);
             errdefer arguments_list.deinit();
             for (call.arguments) |argument| {
                 try arguments_list.append(try self.evaluate(argument));
             }
             const arguments: []Value = try arguments_list.toOwnedSlice();
-
             switch (callee) {
-                .callable => |callable| { // native fn
+                .callable => |callable| { // native lox callable
                     if (arguments.len != callable.arity()) {
                         runtime_token = call.paren;
                         break :blk error.WrongArity;
                     }
                     break :blk callable.callFn(self, arguments);
                 },
-                .function => |function| { // user fn
+                .function => |function| { // lox function
                     if (arguments.len != function.arity()) {
                         runtime_token = call.paren;
                         break :blk error.WrongArity;
@@ -343,7 +354,7 @@ fn evaluate(self: *Self, expr: *Expr) Error!Value {
                 },
             }
         },
-        .grouping => |group| try self.evaluate(group),
+        .grouping => |grouping| try self.evaluate(grouping),
         .literal => |literal| switch (literal) {
             .str => |str| .{ .str = try self.allocator.dupe(u8, str) },
             else => literal,
@@ -356,7 +367,6 @@ fn evaluate(self: *Self, expr: *Expr) Error!Value {
                 break :blk err;
             };
         },
-        // else => @panic("Unimplemented"),
     };
 }
 
@@ -366,8 +376,9 @@ pub fn interpretExpression(self: *Self, expr: *Expr, writer: anytype) Allocator.
 }
 
 pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!void {
-    if (comptime debug.is_trace_compiler) {
+    if (comptime debug.is_trace_interpreter) {
         assert(self.environment.values.count() == 0);
+
         if (self.globals.values.get("clock")) |value| {
             const fun = value.callable;
             assert(@TypeOf(fun) == *LoxCallable);
@@ -389,5 +400,5 @@ pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!vo
         try outputs.append(value);
     }
 
-    if (comptime debug.is_trace_compiler) root.tracesrc(@src(), "outputs: '{any}'", .{outputs});
+    // if (comptime debug.is_trace_interpreter) root.tracesrc(@src(), "outputs: '{any}'", .{outputs});
 }

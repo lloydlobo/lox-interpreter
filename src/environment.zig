@@ -13,6 +13,7 @@ const Environment = @This();
 
 allocator: Allocator,
 enclosing: ?*Environment = null,
+scope_depth: usize,
 values: StringHashMap(Expr.Value),
 
 const Self = @This();
@@ -25,31 +26,69 @@ pub const Error = error{VariableNotDeclared} || Allocator.Error;
 
 pub fn init(allocator: Allocator) Allocator.Error!*Environment {
     const self = try allocator.create(Environment);
-
     self.* = .{
         .allocator = allocator,
         .enclosing = null,
+        .scope_depth = 0,
         .values = StringHashMap(Expr.Value).init(allocator),
     };
 
     return self; // return try allocator.create(Environment).*.init(allocator);
 }
 
-/// TODO: Assert that enclosing is initialized
-///
 // When a local variable has the same name as  a variable in an enclosing
 // scope, it shadows the outer one. Code inside the block can't see it any
 // more—it is hidden in the "shadow" cas by the inner one—but it's still there.
-// `pub`: Required by `Interpreter.execute() -> .block => |statements|`
-pub fn initEnclosing(enclosing: *Environment, allocator: Allocator) Environment {
-    // root.log_fn("initEnclosing", "{any}", .{enclosing.values});
+pub fn initEnclosing(allocator: Allocator, enclosing: *Environment) Environment {
+    assert(enclosing.scope_depth >= 0); // expect non-negative scope depth
+
     return .{
         .allocator = allocator,
         .enclosing = enclosing,
-        // Create a managed hash map with an empty context. If the context is not zero-sized, you must use initContext(allocator, ctx) instead.
-        // .values = StringHashMap(Expr.Value).initContext(allocator, enclosing.values.ctx),
-        .values = StringHashMap(Expr.Value).init(allocator),
+        .scope_depth = enclosing.scope_depth + 1,
+        .values = StringHashMap(Expr.Value).init(allocator), // .values = StringHashMap(Expr.Value).initContext(allocator, .{}),
     };
+}
+const ScopeAction = enum {
+    /// Scope depth + 1
+    parent_to_child,
+    /// Scope depth - 1
+    child_to_parent,
+};
+
+/// If .child_to_parent, then child is depth of `prev`, but `self` is
+/// parent during handoff via defer:
+///
+/// ```zig
+/// const previous = self.environment;
+/// defer {
+///     _ = self.environment.updateScopeDepth(.child_to_parent);
+///     self.environment = previous;
+/// }
+/// var environment = Environment.initEnclosing(self.allocator, previous);
+/// self.environment = &environment;
+/// _ = self.environment.updateScopeDepth(.parent_to_child);
+/// ```
+pub fn updateScopeDepth(self: *Environment, action: ScopeAction) usize {
+    if (false) {
+        if (self.scope_depth == 0 and action == .parent_to_child)
+            @panic("Moving from parent to child scope is not allowed, when parent scope is 0. Use `Environment.initEnclosing()`");
+        if (self.scope_depth == 0 and action == .child_to_parent)
+            @panic("Moving from child to parent scope is not allowed, when scope is already 0.");
+    }
+
+    const prev = self.scope_depth;
+    self.scope_depth = switch (action) {
+        .parent_to_child => prev + 1,
+        .child_to_parent => prev - 1,
+    };
+    root.tracesrc(@src(), "[SCOPE Update]: `{any}` `{d} -> {d}`", .{
+        action,
+        prev,
+        self.scope_depth,
+    });
+
+    return prev;
 }
 
 /// Unimplemented

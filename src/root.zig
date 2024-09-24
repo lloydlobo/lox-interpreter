@@ -29,27 +29,36 @@ comptime {
     assert(1 << 8 == 256);
     assert(1 << 9 == 512);
     assert(1 << 10 == 1024);
+    assert(1 << 11 == 2048);
+    assert(1 << 12 == 4096);
 }
 
-/// src: `@src() std.builtin.SourceLocation` - Must be called in a function.
+const debug_trace_flags: [7]bool = .{
+    debug.is_trace_compiler,
+    debug.is_trace_environment,
+    debug.is_trace_garbage_collector,
+    debug.is_trace_interpreter,
+    debug.is_trace_parser,
+    debug.is_trace_scanner,
+    debug.is_trace_virtual_machine,
+};
+
+/// NOTE: `@src() std.builtin.SourceLocation` ─ Must be called in a function.
 pub fn tracesrc(comptime src: anytype, comptime fmt: []const u8, args: anytype) void {
-    if (comptime (debug.is_trace_env or
-        debug.is_trace_gc or
-        debug.is_trace_parser or
-        debug.is_trace_scanner or
-        debug.is_trace_vm or
-        debug.is_trace_compiler))
-    {
-        var buffer: [1 << 10]u8 = undefined;
+    if (comptime any(bool, debug_trace_flags, null)) {
+        const src_fmt = "{s}{s}:{s}:{d}:{d}{s}";
+        const src_args = .{ COLOR_GREEN, src.file, src.fn_name, src.line, src.column, COLOR_RESET };
+        const args_fmt = "\n\t" ++ COLOR_YELLOW ++ "└─ " ++ COLOR_CYAN ++ fmt ++ COLOR_RESET;
+
+        var buffer: [1 << 11]u8 = undefined;
         var stream = std.io.fixedBufferStream(&buffer);
         const writer = stream.writer();
-        {
-            std.fmt.format(writer, "{s}{s}:{s}:{d}:{d}{s}", .{ COLOR_BOLD, src.file, src.fn_name, src.line, src.column, COLOR_RESET }) catch |err| exit(1, "{}", .{err});
-            const colored_fmt = "\n\t" ++ COLOR_CYAN ++ "└─ " ++ COLOR_BLUE ++ fmt ++ COLOR_RESET;
-            std.fmt.format(writer, colored_fmt, args) catch |err| exit(1, "{}", .{err});
-        }
+        std.fmt.format(writer, src_fmt, src_args) catch |err| exit(1, "{}", .{err});
+        std.fmt.format(writer, args_fmt, args) catch |err| exit(1, "{}", .{err});
 
-        std.log.warn("{s}", .{buffer[0 .. writer.context.*.getPos() catch |err| exit(1, "{}", .{err})]});
+        const pos = writer.context.*.getPos() catch |err| exit(1, "{}", .{err});
+        // std.log.debug("{s}", .{buffer[0..pos]});
+        std.debug.print("{s}\n", .{buffer[0..pos]});
     }
 }
 
@@ -105,11 +114,14 @@ pub fn typeNameUnqualified(comptime T: type) []const u8 {
     return name[index..];
 }
 
-/// Uses struct-like field access in a union (which asserts if you don't access
-/// the active tag).
-/// May not be documented. E.g. you could write t.A to get the payload of the A
-/// variant, assuming it's the active tag. Currently using doing it via the
-/// @field builtin.
+pub const LoxError = error{
+    OutOfMemoryError,
+    RuntimeError,
+    CompileError,
+};
+
+/// Uses struct-like field access in a union (which asserts if you don't access the active tag).
+/// May not be documented. E.g. you could write t.A to get the payload of the A variant, assuming it's the active tag. Currently using doing it via the @field builtin.
 /// [See source link](https://github.com/ziglang/zig/issues/9271#issuecomment-871837227)
 /// [See also](https://github.com/ziglang/zig/blob/7b5d139fd30a7225f073125b8a53e51a2454d223/lib/std/json.zig#L2811)
 pub fn unionPayloadPtr(comptime T: type, union_ptr: anytype) ?*T {
@@ -122,7 +134,6 @@ pub fn unionPayloadPtr(comptime T: type, union_ptr: anytype) ?*T {
 
     return null;
 }
-
 test "unionPayloadPtr" {
     const Tagged = union(enum) {
         A: i32,
@@ -141,11 +152,75 @@ test "unionPayloadPtr" {
     if (unionPayloadPtr([]const u8, &t2)) |ptr| try testing.expectEqualStrings("world", ptr.*);
 }
 
-pub const LoxError = error{
-    OutOfMemoryError,
-    RuntimeError,
-    CompileError,
-};
+/// Causes compile error when items are not indexable (e.g., array or slice).
+/// Causes compile error when items do not have a known length.
+pub inline fn any(comptime T: type, comptime items: anytype, comptime predicateFn: ?fn (T) bool) bool {
+    return comptime blk: {
+        if (std.meta.Elem(@TypeOf(items)) != T)
+            @compileError("items must be indexable (e.g., array or slice)");
+        if (items.len == 0) // FIXME: This only tests for .{} slices and not dynamically memory allocated ones
+            @compileError("items must have a known length");
+        for (items) |item| {
+            if (predicateFn) |predicate| {
+                if (predicate(item)) break :blk true;
+            } else switch (T) {
+                bool => if (item) break :blk true,
+                inline else => break :blk false,
+            }
+        } else break :blk false;
+    };
+}
+test "any ─ basic usage" {
+    // zig fmt: off
+    {
+        const list = [_]i32{ 1, 2, 3, 4, 5 };
+        try testing.expect(any(i32, list, struct { fn predicate(x: i32) bool { return x == 3; } }.predicate)); // assert that 3 is in the list
+        try testing.expect(!any(i32, list, struct { fn predicate(x: i32) bool { return x == 6; } }.predicate)); // assert that 6 is not in the list
+    }
+
+    {
+        const list = [_]bool{ false, false, true };
+        try testing.expect(any(bool, list, null)); // assert that true is in the list
+        try testing.expect(any(bool, list, struct { fn predicate(x: bool) bool { return x == false; } }.predicate)); // assert that false is in the list
+    }
+
+    {
+        const list = [_][]const u8{ "apple", "banana", "cherry" };
+        try testing.expect(any([]const u8, list, struct { fn predicate(x: []const u8) bool { return std.mem.eql(u8, x, "apple"); } }.predicate)); // assert that apple is in the list
+        try testing.expect(any([]const u8, list, struct { fn predicate(x: []const u8) bool { return std.mem.eql(u8, x, "cherry"); } }.predicate)); // assert that cherry is not the list
+    }
+    // zig fmt: on
+}
+
+test "any ─ with custom structs" {
+    const Point = struct {
+        x: i32,
+        y: i32,
+    };
+
+    const points = [_]Point{
+        .{ .x = 1, .y = 2 },
+        .{ .x = 3, .y = 4 },
+        .{ .x = 5, .y = 6 },
+    };
+
+    // zig fmt: off
+    try testing.expect(any(Point, &points, struct { fn predicate(p: Point) bool { return p.x == 3 and p.y == 4; } }.predicate));
+    try testing.expect(!any(Point, &points, struct { fn predicate(p: Point) bool { return p.x == 7 and p.y == 8; } }.predicate));
+    // zig fmt: on
+}
+test "any ─ with non-indexable type" { // This test should fail to compile
+    if (comptime false) {
+        const non_indexable = 42;
+        _ = any(i32, non_indexable, null);
+    }
+}
+test "any ─ with empty array" { // This test should fail to compile
+    if (comptime false) {
+        const empty_array = [_]i32{};
+        _ = any(i32, &empty_array, null);
+    }
+}
 
 // See https://stackoverflow.com/a/66665672
 //
