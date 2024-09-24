@@ -1,6 +1,7 @@
 //! Implements `LoxFunction`.
 
 const std = @import("std");
+const assert = std.debug.assert;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 
@@ -18,6 +19,15 @@ const Stmt = @import("stmt.zig").Stmt;
 pub const FunctionContext = struct {
     allocator: Allocator,
     declaration: Stmt.Function,
+    // closure: *Environment,
+
+    pub fn handleRuntimeError(self: *FunctionContext, err: Interpreter.Error) void {
+        root.eprint("Error in function context: '{s}': ", .{self.declaration.name.lexeme});
+
+        Interpreter.handleRuntimeError(err) catch |e| {
+            root.exit(@intFromEnum(ErrorCode.runtime_error), "{any}.", .{e});
+        };
+    }
 };
 
 fn arityCtxFn(context: *anyopaque) usize {
@@ -27,52 +37,37 @@ fn arityCtxFn(context: *anyopaque) usize {
 
 fn callCtxFn(context: *anyopaque, interpreter: *Interpreter, arguments: []Value) Value {
     const ctx = @as(*FunctionContext, @alignCast(@ptrCast(context)));
-    var block = Stmt{ .block = ctx.declaration.body };
-    const params = ctx.declaration.parameters;
 
-    for (params, 0..) |param, i| {
-        const argument = arguments[i];
-        interpreter.environment.define(param.lexeme, argument) catch |err| {
-            root.eprint("Error in function: '{s}': ", .{ctx.declaration.name.lexeme});
-            handleRuntimeError(err) catch |e|
-                root.exit(@intFromEnum(ErrorCode.runtime_error), "Failed to call handleRuntimeError: {any}.", .{e});
+    for (ctx.declaration.parameters, 0..) |param, i| {
+        interpreter.environment.define(param.lexeme, arguments[i]) catch |err| {
+            ctx.handleRuntimeError(err);
             return Value.Nil;
         };
     }
+    assert((if (Interpreter.runtime_error != undefined)
+        Interpreter.runtime_token.type == .@"return"
+    else
+        Interpreter.runtime_error == undefined));
 
-    if (Interpreter.runtime_error == error.Return) {
-        root.tracesrc(@src(), "match runtime_error: '{any}', '{any}'=====", .{ Interpreter.runtime_error, arguments });
-    }
-    const writer = root.stdout().writer();
-    const result: Value = interpreter.execute(&block, writer) catch |err| blk: {
+    const result: Value = interpreter.execute(
+        @constCast(&Stmt{ .block = ctx.declaration.body }),
+        root.stdout().writer(),
+    ) catch |err|
         switch (err) {
-            error.Return => |e| {
-                const retval = Interpreter.runtime_return_value;
-                root.tracesrc(@src(), "=====in result: '{any}', '{any}'=====", .{ e, retval });
-                Interpreter.runtime_return_value = undefined; //RESET
-                break :blk retval;
-            },
-            else => {
-                root.eprint("Error in function: '{s}': ", .{ctx.declaration.name.lexeme});
-                handleRuntimeError(err) catch |e| root.exit(@intFromEnum(ErrorCode.runtime_error), "Failed to call handleRuntimeError: {any}.", .{e});
-                break :blk Value.Nil;
-            },
-        }
-        unreachable;
+        error.Return => blk: {
+            assert(Interpreter.runtime_error == error.Return and Interpreter.runtime_token.type == .@"return");
+            defer { // Reset thread-local variables runtime state captured on error
+                Interpreter.runtime_error = undefined;
+                Interpreter.runtime_return_value = undefined;
+                Interpreter.runtime_token = undefined;
+            }
+            break :blk Interpreter.runtime_return_value;
+        },
+        else => blk: {
+            ctx.handleRuntimeError(err);
+            break :blk Value.Nil;
+        },
     };
-
-    // const ret: Value = switch (result) {
-    //     .ret => |ret| blk: {
-    //         std.log.debug("loxfunction.zig: in callCtxFn(): .ret => ret: {any}\n", .{ret});
-    //         root.tracesrc(@src(), "=====.ret => ret: {any}", .{ret});
-    //         break :blk ret.*.ret;
-    //     },
-    //     else => blk: {
-    //         root.tracesrc(@src(), "=====else => result: {any}", .{result});
-    //         break :blk Value.Nil;
-    //     },
-    // };
-    root.tracesrc(@src(), "result: {any}, result {any}", .{ result, result });
 
     return result;
 }

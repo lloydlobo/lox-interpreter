@@ -34,10 +34,14 @@ globals: *Environment,
 /// Tracks current frame and changes as we enter and exit local scopes.
 environment: *Environment,
 
-var runtime_token: Token = undefined;
-var undeclared_token: Token = undefined;
-pub var runtime_return_value: Value = undefined;
+/// Uses thread-local variables to communicate out-of-band error information.
+/// See also:
+///   - https://www.reddit.com/r/Zig/comments/wqnd04/my_reasoning_for_why_zig_errors_shouldnt_have_a/
+///   - https://github.com/ziglang/zig/issues/2647
 pub var runtime_error: Error = undefined;
+pub var runtime_return_value: Value = undefined;
+pub var runtime_token: Token = undefined;
+pub var undeclared_token: Token = undefined;
 
 const Self = @This();
 
@@ -50,6 +54,9 @@ const RuntimeError = error{
     NotCallable,
 };
 
+const ErrorValue = enum([]const u8) {
+    Return = "",
+};
 /// These are not actual errors, but a way to propagate stuff like return values.
 const PropagationException = error{Return};
 
@@ -91,7 +98,7 @@ pub fn handleRuntimeError(err: Error) Allocator.Error!void {
     };
 }
 
-fn visitBinaryExpr(self: *Self, expr: Expr.Binary) Error!Expr.Value {
+fn visitBinaryExpr(self: *Self, expr: Expr.Binary) Error!Value {
     const l = try self.evaluate(expr.left);
     const r = try self.evaluate(expr.right);
     const opsn = checkOperands(expr.operator, l, r, .num);
@@ -117,7 +124,7 @@ fn visitBinaryExpr(self: *Self, expr: Expr.Binary) Error!Expr.Value {
     };
 }
 
-fn visitLogicalExpr(self: *Self, expr: Expr.Logical) Error!Expr.Value {
+fn visitLogicalExpr(self: *Self, expr: Expr.Logical) Error!Value {
     const l = try self.evaluate(expr.left);
 
     if (expr.operator.type == .@"or") {
@@ -130,7 +137,7 @@ fn visitLogicalExpr(self: *Self, expr: Expr.Logical) Error!Expr.Value {
 }
 
 /// Matches operator type with kind and returns its type.
-fn checkOperand(operator: Token, operand: Expr.Value, comptime kind: std.meta.FieldEnum(Expr.Value)) ?std.meta.fieldInfo(Expr.Value, kind).type {
+fn checkOperand(operator: Token, operand: Value, comptime kind: std.meta.FieldEnum(Value)) ?std.meta.fieldInfo(Value, kind).type {
     return switch (operand) {
         kind => |x| x,
         else => {
@@ -140,9 +147,9 @@ fn checkOperand(operator: Token, operand: Expr.Value, comptime kind: std.meta.Fi
     };
 }
 
-fn checkOperands(operator: Token, left: Expr.Value, right: Expr.Value, comptime kind: std.meta.FieldEnum(Expr.Value)) ?struct {
-    l: std.meta.fieldInfo(Expr.Value, kind).type,
-    r: std.meta.fieldInfo(Expr.Value, kind).type,
+fn checkOperands(operator: Token, left: Value, right: Value, comptime kind: std.meta.FieldEnum(Value)) ?struct {
+    l: std.meta.fieldInfo(Value, kind).type,
+    r: std.meta.fieldInfo(Value, kind).type,
 } {
     return .{
         .l = checkOperand(operator, left, kind) orelse return null,
@@ -150,7 +157,7 @@ fn checkOperands(operator: Token, left: Expr.Value, right: Expr.Value, comptime 
     };
 }
 
-fn visitUnaryExpr(self: *Self, expr: Expr.Unary) Error!Expr.Value {
+fn visitUnaryExpr(self: *Self, expr: Expr.Unary) Error!Value {
     const r = try self.evaluate(expr.right);
 
     return switch (expr.operator.type) {
@@ -162,7 +169,7 @@ fn visitUnaryExpr(self: *Self, expr: Expr.Unary) Error!Expr.Value {
 
 /// Lox follows Ruby’s simple rule: `false` and `nil` are falsey, and
 /// everything else is truthy.
-fn isTruthy(value: Expr.Value) bool {
+fn isTruthy(value: Value) bool {
     return switch (value) {
         .nil => false,
         .bool => |x| x,
@@ -170,7 +177,7 @@ fn isTruthy(value: Expr.Value) bool {
     };
 }
 
-fn isEqual(a: Expr.Value, b: Expr.Value) bool {
+fn isEqual(a: Value, b: Value) bool {
     switch (a) {
         .str => |l| switch (b) {
             .str => |r| return mem.eql(u8, l, r),
@@ -182,7 +189,7 @@ fn isEqual(a: Expr.Value, b: Expr.Value) bool {
     return std.meta.eql(a, b);
 }
 
-fn printValue(writer: anytype, value: Expr.Value) void {
+fn printValue(writer: anytype, value: Value) void {
     switch (value) {
         .bool => |x| std.fmt.format(writer, "{}", .{x}) catch {},
         .nil => std.fmt.format(writer, "nil", .{}) catch {},
@@ -239,12 +246,9 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
             root.tracesrc(@src(), "prior to returning: ====[stmt, return_stmt, ret]: '{any}', '{any}', '{any}'====", .{ stmt.toString(), return_stmt, ret });
 
             out = .{ .ret = &ret };
-
             runtime_token = stmt.return_stmt.keyword;
             runtime_return_value = ret.ret;
             runtime_error = error.Return;
-            // try handleRuntimeError(error.Return);
-
             return error.Return;
         },
         .var_stmt => |var_stmt| {
@@ -264,7 +268,7 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
 
 /// Visit methods do a **post-order traversal**—each node evaluates its
 /// children before doing its own work.
-fn evaluate(self: *Self, expr: *Expr) Error!Expr.Value {
+fn evaluate(self: *Self, expr: *Expr) Error!Value {
     return switch (expr.*) {
         // Recursively evaluate "rhs" -> get value, and store in named variable Similar to variable declarations in `execute() => .var_stmt`: Key change: assignment not allowed to create a new variable.
         .assign => |assign| blk: {
@@ -277,11 +281,30 @@ fn evaluate(self: *Self, expr: *Expr) Error!Expr.Value {
             break :blk value;
         },
         .binary => |binary| try self.visitBinaryExpr(binary),
-        // * First, we evaluate the expression for the callee. Typically, this expression is just an identifier that looks up the function by its name, but it could be anything. Then we evaluate each of the argument expressions in order and store the resulting values in a list.
-        // * This is another one of those subtle semantic choices. Since argument expressions may have side effects, the order they are evaluated could be user visible. Even so, some languages like Scheme and C don’t specify an order. This gives compilers freedom to reorder them for efficiency, but means users may be unpleasantly surprised if arguments aren’t evaluated in the order they expect.
-        // * Further, this environment must be created dynamically. Each function call gets its own environment. Otherwise, recursion would break. If there are multiple calls to the same function in play at the same time, each needs its own environment, even though they are all calls to the same function.
-        // * That’s why we create a new environment at each call, not at the function declaration. The call() method we saw earlier does that. At the beginning of the call, it creates a new environment. Then it walks the parameter and argument lists in lockstep. For each pair, it creates a new variable with the parameter’s name and binds it to the argument’s value.
         .call => |call| blk: {
+            // * First, we evaluate the expression for the callee. Typically,
+            // this expression is just an identifier that looks up the function
+            // by its name, but it could be anything. Then we evaluate each of
+            // the argument expressions in order and store the resulting values
+            // in a list.
+            // * This is another one of those subtle semantic choices. Since
+            // argument expressions may have side effects, the order they are
+            // evaluated could be user visible. Even so, some languages like
+            // Scheme and C don’t specify an order. This gives compilers
+            // freedom to reorder them for efficiency, but means users may be
+            // unpleasantly surprised if arguments aren’t evaluated in the
+            // order they expect.
+            // * Further, this environment must be created dynamically. Each
+            // function call gets its own environment. Otherwise, recursion
+            // would break. If there are multiple calls to the same function in
+            // play at the same time, each needs its own environment, even
+            // though they are all calls to the same function.
+            // * That’s why we create a new environment at each call, not at
+            // the function declaration. The call() method we saw earlier does
+            // that. At the beginning of the call, it creates a new
+            // environment. Then it walks the parameter and argument lists in
+            // lockstep. For each pair, it creates a new variable with the
+            // parameter’s name and binds it to the argument’s value.
             const callee: Value = try self.evaluate(call.callee);
 
             // Discards the call-local environment and restores the previous one
@@ -292,37 +315,30 @@ fn evaluate(self: *Self, expr: *Expr) Error!Expr.Value {
             errdefer environment.deinit(); // @Unimplemented
             self.environment = &environment;
 
-            var arguments = std.ArrayList(Expr.Value).init(self.allocator);
-            errdefer arguments.deinit();
+            var arguments_list = std.ArrayList(Value).init(self.allocator);
+            errdefer arguments_list.deinit();
+            for (call.arguments) |argument| {
+                try arguments_list.append(try self.evaluate(argument));
+            }
+            const arguments: []Value = try arguments_list.toOwnedSlice();
 
-            for (call.arguments) |argument|
-                try arguments.append(try self.evaluate(argument));
-
-            const args = try arguments.toOwnedSlice();
-            // _ = ;
-            root.tracesrc(@src(), "in .call => `{0any}`, `{1any}`", .{ call.callee.variable, root.unionPayloadPtr(Expr, expr) });
-            root.tracesrc(@src(), "match runtime_error: '{any}', '{any}'=====", .{ runtime_error, call });
             switch (callee) {
                 .callable => |callable| { // native fn
-                    if (args.len != callable.arity()) {
+                    if (arguments.len != callable.arity()) {
                         runtime_token = call.paren;
                         break :blk error.WrongArity;
                     }
-                    break :blk callable.callFn(self, args);
+                    break :blk callable.callFn(self, arguments);
                 },
                 .function => |function| { // user fn
-                    if (args.len != function.arity()) {
+                    if (arguments.len != function.arity()) {
                         runtime_token = call.paren;
                         break :blk error.WrongArity;
                     }
-                    if (runtime_error == error.Return) {
-                        root.tracesrc(@src(), "match runtime_error: '{any}', '{any}'=====", .{ runtime_error, function });
-                    }
-                    break :blk function.call(self, args);
+                    break :blk function.call(self, arguments);
                 },
                 else => {
                     runtime_token = call.paren;
-                    // runtime_token = call.callee.variable;
                     break :blk error.NotCallable;
                 },
             }

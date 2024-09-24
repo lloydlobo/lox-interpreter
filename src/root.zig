@@ -49,7 +49,7 @@ pub fn tracesrc(comptime src: anytype, comptime fmt: []const u8, args: anytype) 
             std.fmt.format(writer, colored_fmt, args) catch |err| exit(1, "{}", .{err});
         }
 
-        std.log.debug("{s}", .{buffer[0 .. writer.context.*.getPos() catch |err| exit(1, "{}", .{err})]});
+        std.log.warn("{s}", .{buffer[0 .. writer.context.*.getPos() catch |err| exit(1, "{}", .{err})]});
     }
 }
 
