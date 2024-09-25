@@ -15,9 +15,7 @@ if (true) {
     // hello();
 }
 
-if (false) {
-
-}
+if (true) {
     print "Functions - Closures";
     fun makeCounter() {
         var i = 0;
@@ -31,6 +29,7 @@ if (false) {
     var counter = makeCounter();
     counter(); // "1".
     counter(); // "2".
+}
 
 
 //  if (true) {

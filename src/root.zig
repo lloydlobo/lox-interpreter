@@ -57,8 +57,7 @@ pub fn tracesrc(comptime src: anytype, comptime fmt: []const u8, args: anytype) 
         std.fmt.format(writer, args_fmt, args) catch |err| exit(1, "{}", .{err});
 
         const pos = writer.context.*.getPos() catch |err| exit(1, "{}", .{err});
-        // std.log.debug("{s}", .{buffer[0..pos]});
-        std.debug.print("{s}\n", .{buffer[0..pos]});
+        std.log.debug("{s}", .{buffer[0..pos]});
     }
 }
 

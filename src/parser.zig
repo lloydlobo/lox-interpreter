@@ -532,7 +532,7 @@ fn returnStatement(self: *Parser) Error!Stmt {
         .keyword = keyword,
         .value = value,
     } };
-    root.tracesrc(@src(), "stmt: {}", .{stmt});
+    // root.tracesrc(@src(), "stmt: {}", .{stmt});
 
     return stmt;
 }

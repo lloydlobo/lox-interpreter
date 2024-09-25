@@ -92,6 +92,11 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
             break :blk;
         }
 
+        // See https://zig.guide/standard-library/allocators
+        // std.heap.ArenaAllocator takes in a child allocator and allows you to
+        // allocate many times and only free once. Here, .deinit() is called on
+        // the arena, which frees all memory. Using allocator.free for further
+        // individual allocated memory would be a no-op (i.e. does nothing).
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer arena.deinit();
 

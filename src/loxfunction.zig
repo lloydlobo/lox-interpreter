@@ -70,7 +70,7 @@ fn callFn(context: *anyopaque, interpreter: *Interpreter, arguments: []Value) Va
 
     _ = interpreter.executeBlock(
         ctx.declaration.body,
-        environment,
+        .{ .existing = environment },
         root.stdout().writer(),
     ) catch |err| switch (err) {
         error.Return => {
