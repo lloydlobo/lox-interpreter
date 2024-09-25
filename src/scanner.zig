@@ -6,7 +6,7 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 
 const @"error" = @import("main.zig").@"error";
-const Token = @import("token.zig").Token;
+const Token = @import("token.zig");
 
 // See also https://craftinginterpreters.com/scanning.html#recognizing-lexemes
 

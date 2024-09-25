@@ -1,5 +1,4 @@
 const std = @import("std");
-const root = @import("root.zig");
 const assert = std.debug.assert;
 const testing = std.testing;
 const mem = std.mem;
@@ -7,91 +6,142 @@ const Allocator = mem.Allocator;
 const StringHashMap = std.StringHashMap;
 
 const Expr = @import("expr.zig").Expr;
-const Token = @import("token.zig").Token;
+const root = @import("root.zig");
+const Token = @import("token.zig");
 
-pub const Environment = struct {
-    allocator: Allocator,
-    enclosing: ?*Environment = null,
-    values: StringHashMap(Expr.Value),
+const Environment = @This();
 
-    const Self = @This();
+allocator: Allocator,
+enclosing: ?*Environment = null,
+scope_depth: usize,
+values: StringHashMap(Expr.Value),
 
-    // note: `pub` required for union in `Interpreter.Error` due to `Environment.assign`.
-    pub const Error = error{VariableNotDeclared} || Allocator.Error;
+const Self = @This();
 
-    // STUB
-    // const GetOrPutResult = StringHashMap(Expr.Value).GetOrPutResult;
+// note: `pub` required for union in `Interpreter.Error` due to `Environment.assign`.
+pub const Error = error{VariableNotDeclared} || Allocator.Error;
 
-    pub fn init(allocator: Allocator) Allocator.Error!*Environment {
-        const self = try allocator.create(Environment);
+// STUB
+// const GetOrPutResult = StringHashMap(Expr.Value).GetOrPutResult;
 
-        self.* = .{
-            .allocator = allocator,
-            .values = StringHashMap(Expr.Value).init(allocator),
-        };
+pub fn init(allocator: Allocator) Allocator.Error!*Environment {
+    const self = try allocator.create(Environment);
+    self.* = .{
+        .allocator = allocator,
+        .enclosing = null,
+        .scope_depth = 0,
+        .values = StringHashMap(Expr.Value).init(allocator),
+    };
 
-        return self; // return try allocator.create(Environment).*.init(allocator);
+    return self; // return try allocator.create(Environment).*.init(allocator);
+}
+
+// When a local variable has the same name as  a variable in an enclosing
+// scope, it shadows the outer one. Code inside the block can't see it any
+// more—it is hidden in the "shadow" cas by the inner one—but it's still there.
+pub fn initEnclosing(allocator: Allocator, enclosing: *Environment) Environment {
+    assert(enclosing.scope_depth >= 0); // expect non-negative scope depth
+
+    return .{
+        .allocator = allocator,
+        .enclosing = enclosing,
+        .scope_depth = enclosing.scope_depth + 1,
+        .values = StringHashMap(Expr.Value).init(allocator), // .values = StringHashMap(Expr.Value).initContext(allocator, .{}),
+    };
+}
+const ScopeAction = enum {
+    /// Scope depth + 1
+    parent_to_child,
+    /// Scope depth - 1
+    child_to_parent,
+};
+
+/// If .child_to_parent, then child is depth of `prev`, but `self` is
+/// parent during handoff via defer:
+///
+/// ```zig
+/// const previous = self.environment;
+/// defer {
+///     _ = self.environment.updateScopeDepth(.child_to_parent);
+///     self.environment = previous;
+/// }
+/// var environment = Environment.initEnclosing(self.allocator, previous);
+/// self.environment = &environment;
+/// _ = self.environment.updateScopeDepth(.parent_to_child);
+/// ```
+pub fn updateScopeDepth(self: *Environment, action: ScopeAction) usize {
+    if (false) {
+        if (self.scope_depth == 0 and action == .parent_to_child)
+            @panic("Moving from parent to child scope is not allowed, when parent scope is 0. Use `Environment.initEnclosing()`");
+        if (self.scope_depth == 0 and action == .child_to_parent)
+            @panic("Moving from child to parent scope is not allowed, when scope is already 0.");
     }
 
-    /// TODO: Assert that enclosing is initialized
-    ///
-    // When a local variable has the same name as  a variable in an enclosing
-    // scope, it shadows the outer one. Code inside the block can't see it any
-    // more—it is hidden in the "shadow" cas by the inner one—but it's still there.
-    // `pub`: Required by `Interpreter.execute() -> .block => |statements|`
-    pub fn initEnclosing(enclosing: *Self) Environment {
-        return .{
-            .allocator = enclosing.allocator,
-            .enclosing = enclosing,
-            .values = StringHashMap(Expr.Value).init(enclosing.allocator),
-        };
-    }
+    const prev = self.scope_depth;
+    self.scope_depth = switch (action) {
+        .parent_to_child => prev + 1,
+        .child_to_parent => prev - 1,
+    };
+    root.tracesrc(@src(), "[SCOPE Update]: `{any}` `{d} -> {d}`", .{
+        action,
+        prev,
+        self.scope_depth,
+    });
 
-    /// NOTE: This function call clobbers values.
-    pub fn define(self: *Self, name: []const u8, value: Expr.Value) Error!void {
-        assert(name.len > 0 and root.isAlphaNumeric(name[0]));
+    return prev;
+}
 
-        try self.values.put(name, value);
-    }
+/// Unimplemented
+pub fn deinit(self: *Environment) void {
+    _ = self;
+    std.log.warn("Tried to deinit unimplemented Environment.deinit()", .{});
+}
 
-    /// Get the value of a variable by its token name (`Token.lexeme`). It’s OK
-    /// to refer to a variable before it’s defined as long as the reference is not
-    /// evaluated.
-    ///
-    // Defers error to runtime (hard to define recursive functions if
-    // mentioning a variable before declaration is a static error.)
-    //
-    // Scope and environments are close cousins. The former is the theoretical
-    // concept, and the latter is the machinery that implements it.
-    //
-    // The beginning of a block introduces a new local scope, and that scope
-    // ends when execution passes the closing }. Any variables declared inside
-    // the block disappear.
-    pub fn get(self: *const Self, name: Token) Error!Expr.Value {
-        assert(name.lexeme.len > 0 and root.isAlphaNumeric(name.lexeme[0]));
+/// NOTE: This function call clobbers values.
+pub fn define(self: *Self, name: []const u8, value: Expr.Value) Error!void {
+    assert(name.len > 0 and root.isAlphaNumeric(name[0]));
+    // root.log_fn("define", "{any}, {any}", .{ self.values, name });
+    try self.values.put(name, value);
+}
 
-        if (self.values.get(name.lexeme)) |value| return value;
-        if (self.enclosing) |enclosing| return enclosing.get(name);
+/// Get the value of a variable by its token name (`Token.lexeme`). It’s OK
+/// to refer to a variable before it’s defined as long as the reference is not
+/// evaluated.
+///
+// Defers error to runtime (hard to define recursive functions if
+// mentioning a variable before declaration is a static error.)
+//
+// Scope and environments are close cousins. The former is the theoretical
+// concept, and the latter is the machinery that implements it.
+//
+// The beginning of a block introduces a new local scope, and that scope
+// ends when execution passes the closing }. Any variables declared inside
+// the block disappear.
+pub fn get(self: *const Self, name: Token) Error!Expr.Value {
+    assert(name.lexeme.len > 0 and root.isAlphaNumeric(name.lexeme[0]));
+    // root.log_fn("get", "{any}, {any}", .{ self.values, name });
 
+    if (self.values.get(name.lexeme)) |value| return value;
+    if (self.enclosing) |enclosing| return enclosing.get(name);
+
+    return error.VariableNotDeclared;
+}
+
+/// Assign a new value to an existing variable.
+/// Note: Also no implicit var declaration.
+/// See also: https://craftinginterpreters.com/statements-and-state.html#design-note
+pub fn assign(self: *Self, name: Token, value: Expr.Value) Error!void {
+    assert(name.lexeme.len > 0 and root.isAlphaNumeric(name.lexeme[0]));
+
+    if (self.values.getPtr(name.lexeme)) |ptr| {
+        ptr.* = value;
+    } else if (self.enclosing) |enclosing| {
+        // recursively find and assign variable in nearest enclosing
+        try enclosing.assign(name, value);
+    } else {
         return error.VariableNotDeclared;
     }
-
-    /// Assign a new value to an existing variable.
-    /// Note: Also no implicit var declaration.
-    /// See also: https://craftinginterpreters.com/statements-and-state.html#design-note
-    pub fn assign(self: *Self, name: Token, value: Expr.Value) Error!void {
-        assert(name.lexeme.len > 0 and root.isAlphaNumeric(name.lexeme[0]));
-
-        if (self.values.getPtr(name.lexeme)) |ptr| {
-            ptr.* = value;
-        } else if (self.enclosing) |enclosing| {
-            // recursively find and assign variable in nearest enclosing
-            try enclosing.assign(name, value);
-        } else {
-            return error.VariableNotDeclared;
-        }
-    }
-};
+}
 
 test "define and get" { // $ zig test src/environment.zig 2>&1 | head
     var arena = std.heap.ArenaAllocator.init(testing.allocator);

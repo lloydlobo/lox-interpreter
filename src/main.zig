@@ -2,10 +2,10 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const AstPrinter = @import("astprinter.zig").AstPrinter;
-const Interpreter = @import("interpreter.zig").Interpreter;
-const Parser = @import("parser.zig").Parser;
+const Interpreter = @import("interpreter.zig");
+const Parser = @import("parser.zig");
 const Scanner = @import("scanner.zig").Scanner;
-const Token = @import("token.zig").Token;
+const Token = @import("token.zig");
 
 /// Toggled by `runtimeError()`
 var g_had_runtime_error: bool = false;
@@ -77,8 +77,8 @@ pub const Command = enum {
 };
 
 pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 {
-    var bw = std.io.bufferedWriter(writer);
-    const stdout_writer = bw.writer(); // const writer = std.io.getStdOut().writer();
+    // var bw = std.io.bufferedWriter(writer);
+    // const stdout_writer = bw.writer(); // const writer = std.io.getStdOut().writer();
 
     blk: {
         const cmd = Command.fromString(command).?;
@@ -88,10 +88,15 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
         const tokens = try scanner.scanTokens();
 
         if (cmd == .tokenize) {
-            for (tokens) |token| try stdout_writer.print("{}\n", .{token});
+            for (tokens) |token| try writer.print("{}\n", .{token});
             break :blk;
         }
 
+        // See https://zig.guide/standard-library/allocators
+        // std.heap.ArenaAllocator takes in a child allocator and allows you to
+        // allocate many times and only free once. Here, .deinit() is called on
+        // the arena, which frees all memory. Using allocator.free for further
+        // individual allocated memory would be a no-op (i.e. does nothing).
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer arena.deinit();
 
@@ -106,13 +111,13 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
                 break :blk; // stop if syntax error
 
             if (cmd == .parse) {
-                try AstPrinter.print(stdout_writer, expression.?);
+                try AstPrinter.print(writer, expression.?);
                 break :blk;
             }
 
             if (cmd == .evaluate) {
                 var interpreter = try Interpreter.init(allocator);
-                try interpreter.interpretExpression(expression.?, stdout_writer);
+                try interpreter.interpretExpression(expression.?, writer);
                 break :blk;
             }
         }
@@ -128,7 +133,7 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
             }
 
             var interpreter = try Interpreter.init(arena.allocator());
-            try interpreter.interpret(statements, stdout_writer);
+            try interpreter.interpret(statements, writer);
             break :blk;
         }
     }
@@ -141,7 +146,7 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
             ErrorCode.syntax_error.toString(),
         });
 
-    try bw.flush();
+    // try bw.flush();
 
     var res: ErrorCode = .no_error;
     if (g_had_error) res = .syntax_error;

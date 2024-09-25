@@ -5,47 +5,69 @@ const fmt = std.fmt;
 const FormatOptions = fmt.FormatOptions;
 
 const Expr = @import("expr.zig").Expr;
-const Token = @import("token.zig").Token;
+const Token = @import("token.zig");
+const debug = @import("debug.zig");
 
-/// statement        → expr
-///                  | break_stmt
-///                  | for_stmt
-///                  | if_stmt
-///                  | print
-///                  | var_stmt
-///                  | while_stmt
-///                  | block ;
+/// `statement → block | break_stmt | expr_stmt | for_stmt | if_stmt | print_stmt | var_stmt | while_stmt  ;`
 pub const Stmt = union(enum) {
+    block: []Stmt,
     break_stmt: ?*Expr,
-    expr: *Expr,
-    if_stmt: If, // → "if" "(" expression ")" statement ( "else" statement )? ;
-    print: *Expr,
+    expr_stmt: *Expr,
+    function: Function,
+    /// "if" "(" expression ")" statement ( "else" statement )? ;
+    if_stmt: If,
+    print_stmt: *Expr,
+    return_stmt: Return,
     var_stmt: Var,
     while_stmt: While,
-    block: []Stmt,
 
-    /// "If         : Expr condition, Stmt thenBranch," + " Stmt elseBranch",
-    ///
-    // since else clauses are optional, and there is no explicit delimiter
-    // marking the end of the if statement, the grammar is ambiguous when you
-    // nest ifs in this way ─ This classic syntax pitfall is the [dangling else
-    // problem](https://en.wikipedia.org/wiki/Dangling_else).
-    // Solution: " `else` is bound to the nearest `if` that precedes it. "
-    // See https://craftinginterpreters.com/appendix-ii.html#if-statement
+    /// Converts union value to a string literal representing the name.
+    pub fn toString(self: Stmt) []const u8 {
+        return @tagName(self);
+    }
+
+    pub const Function = struct { // should implement Callable
+        body: []Stmt, // allocate separately?
+        name: Token,
+        parameters: []Token,
+
+        pub fn create(allocator: Allocator) !*Function {
+            const self = try allocator.create(Function);
+            errdefer allocator.destroy(self);
+            if (comptime debug.is_trace_garbage_collector)
+                std.log.debug("{} allocate {} for {s}", .{
+                    @intFromPtr(&self),
+                    @sizeOf(Function),
+                    @typeName(Function),
+                });
+
+            return self;
+        }
+    };
+
+    /// "If  : Expr condition, Stmt thenBranch," + " Stmt elseBranch",
     pub const If = struct {
         condition: *Expr,
-        then_branch: *Stmt,
+        // See [dangling else problem](https://en.wikipedia.org/wiki/Dangling_else).
+        // Solution: " `else` is bound to the nearest `if` that precedes it. "
+        // See https://craftinginterpreters.com/appendix-ii.html#if-statement
         else_branch: ?*Stmt,
+        then_branch: *Stmt,
+    };
+
+    pub const Return = struct {
+        keyword: Token,
+        value: ?*Expr,
     };
 
     pub const Var = struct {
-        name: Token,
         initializer: ?*Expr,
+        name: Token,
     };
 
     pub const While = struct {
-        condition: *Expr,
         body: *Stmt,
+        condition: *Expr,
     };
 };
 

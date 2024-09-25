@@ -24,3 +24,7 @@ your_program.sh.bak
 codecrafters.yml
 test.log
 vgcore.*
+src/return.zig
+src/object.zig.1.bak
+src/object.zig
+src/chunk.zig

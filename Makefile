@@ -34,6 +34,7 @@ watch-test:
 .PHONY: build-run
 build-run:
 	@date && echo $(UNAME_S)
+	zig ast-check src/main.zig
 	zig build run --summary all
 
 #
@@ -55,6 +56,7 @@ evaluate:
 	@$(EXE) evaluate test.lox && echo
 
 run:
+	zig ast-check src/main.zig
 	@zig build
 	@$(EXE) run test.lox && echo
 
@@ -62,6 +64,7 @@ run:
 .PHONY: valgrind-tokenize valgrind-parse valgrind-evaluate valgrind-run
 
 valgrind-tokenize:
+	zig ast-check src/main.zig
 	zig build
 	valgrind --leak-check=full --show-leak-kinds=all -s --track-origins=yes $(EXE) tokenize test.lox
 
