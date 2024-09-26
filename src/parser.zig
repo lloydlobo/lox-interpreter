@@ -2,7 +2,6 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const root = @import("root.zig");
 const assert = std.debug.assert;
 const mem = std.mem;
 const Allocator = mem.Allocator;
@@ -13,6 +12,7 @@ const Scanner = @import("scanner.zig").Scanner;
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
 const debug = @import("debug.zig");
+const root = @import("root.zig");
 const tokenError = @import("main.zig").tokenError;
 
 const Parser = @This();
@@ -22,7 +22,7 @@ current: usize = 0, // index
 tokens: std.MultiArrayList(Token),
 tokens_len: usize,
 
-const Error = error{ ParseError, IoError } || Allocator.Error;
+const Error = error{ parse_error, io_error } || Allocator.Error;
 
 pub fn init(tokens: []const Token, allocator: Allocator) Allocator.Error!Parser {
     var list = std.MultiArrayList(Token){};
@@ -55,7 +55,7 @@ fn createStmt(self: *Parser, value: Stmt) Allocator.Error!*Stmt {
 fn parseError(token: Token, comptime message: []const u8) Error {
     tokenError(token, message);
 
-    return error.ParseError;
+    return Error.parse_error;
 }
 
 // match is short for consumeToken()
@@ -88,7 +88,6 @@ fn check(self: *Parser, @"type": Token.Type) bool {
     };
 }
 
-/// Increments current counter and returns the token if is not at end.
 fn advance(self: *Parser) Token {
     if (!self.isAtEnd()) self.current += 1;
     assert(self.current != 0 and self.current < self.tokens_len);
@@ -173,11 +172,6 @@ fn finishCall(self: *Parser, callee: *Expr) Error!*Expr {
     return expr;
 }
 
-// Similar to how we parse infix operators. First, we parse a primary
-// expression, the “left operand” to the call. Then, each time we see a (,
-// we call finishCall() to parse the call expression using the previously
-// parsed expression as the callee. The returned expression becomes the new
-// expr and we loop to see if the result is itself called.
 fn call(self: *Parser) Error!*Expr {
     var expr = try self.primary();
 
@@ -238,6 +232,7 @@ fn term(self: *Parser) Error!*Expr {
 
     return expr;
 }
+
 /// comparison → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
 fn comparison(self: *Parser) Error!*Expr {
     var expr = try self.term();
@@ -272,7 +267,6 @@ fn equality(self: *Parser) Error!*Expr {
     return expr;
 }
 
-/// Calls equality() for its operands.
 fn andExpr(self: *Parser) Error!*Expr {
     var expr: *Expr = try self.equality();
 
@@ -289,8 +283,6 @@ fn andExpr(self: *Parser) Error!*Expr {
     return expr;
 }
 
-/// Calls andExpr() (next higher precedence level) for its operands.
-/// Parsing a series of `or` expressions mirrors other binary operators.
 fn orExpr(self: *Parser) Error!*Expr {
     var expr: *Expr = try self.andExpr();
 
@@ -307,53 +299,18 @@ fn orExpr(self: *Parser) Error!*Expr {
     return expr;
 }
 
-// Enhances single token of lookahead similar to binary operators like `+`.
-//
-// Consider:
-//
-//   var a = "before";
-//   a = "value";
-//
-// On the second line, we don’t evaluate a (which would return the
-// string “before”). We figure out what variable a refers to so we know
-// where to store the right-hand side expression’s value. The classic
-// terms for these two constructs are l-value and r-value. All of the
-// expressions that we’ve seen so far that produce values are r-values.
-// An l-value “evaluates” to a storage location that you can assign
-// into.
-// In fact, the names come from assignment expressions: l-values appear
-// on the left side of the = in an assignment, and r-values on the right.
 fn assignment(self: *Parser) Error!*Expr {
-
-    // Parse "lhs", which can be any expression of higher precedence.
-    // previously:
-    //     try self.equality();
     const expr: *Expr = try self.orExpr();
 
-    // When we find an `=`, we parse right-hand side, and then wrap it all
-    // up in an assignment expression tree node. Since assignment is
-    // right-associative, recursively call 'assignment()' to parse "rhs".
     if (self.match(.{.equal})) {
         const equals = self.previous();
         const value = try self.assignment();
 
-        // The trick is to look at "lhs" expression and figure out what kind of assignment target
-        // it is - **just before we create** the assignment expression node!
         return switch (expr.*) {
-            // This conversion works as every valid assignment target happens to also be valid syntax as a normal expression.
             .variable => |name| try self.createExpr(.{ .assign = .{
                 .name = name,
                 .value = value,
             } }),
-
-            // We report an error if the left-hand side isn’t a valid
-            // assignment target, but we don’t throw it because the parser
-            // isn’t in a confused state where we need to go into panic mode
-            // and synchronize. That ensures we report an error on code such as
-            // `a + b = c;`
-            // TODO: Add fields later to support:
-            // `a = 3;`    // OK.
-            // `(a) = 3;`  // Error.
             else => parseError(equals, "Invalid assignment target."),
         };
     }
@@ -362,19 +319,10 @@ fn assignment(self: *Parser) Error!*Expr {
 }
 
 /// expression → equality ;
-//
-// The difference is that the left-hand side of an assignment isn’t an
-// expression that evaluates to a value. It’s a sort of
-// pseudo-expression that evaluates to a “thing” you can assign to.
 fn expression(self: *Parser) Error!*Expr {
     return try self.assignment();
 }
 
-/// In a recursive descent parser, state is managed by the call stack. To
-/// reset during synchronization, `ParseError` error are thrown and caught at
-/// statement boundaries. The parser discards tokens until a likely statement
-/// boundary (semicolon or keyword) is reached, preventing cascaded errors and
-/// allowing parsing to continue.
 fn synchronize(self: *Parser) void {
     _ = self.advance();
     while (!self.isAtEnd()) {
@@ -401,10 +349,6 @@ fn expressionStatement(self: *Parser) Error!Stmt {
     return .{ .expr_stmt = value };
 }
 
-// nb. Having block() return the raw list of statements and leaving it to
-// statement() to wrap the list in a Stmt.Block looks a little odd. I did it
-// that way because we’ll reuse block() later for parsing function bodies and
-// we don’t want that body wrapped in a Stmt.Block.
 fn block(self: *Parser) Error![]Stmt {
     var statements = std.ArrayList(Stmt).init(self.allocator);
     while (!self.check(.right_brace) and !self.isAtEnd()) {
@@ -416,13 +360,6 @@ fn block(self: *Parser) Error![]Stmt {
     return try statements.toOwnedSlice();
 }
 
-// createStmt uses the allocator to allocate memory on the heap, avoiding
-// stack lifetime issues. By dynamically allocating the then_branch, we
-// avoid referencing memory that would be invalidated after the function
-// returns. The then_branch pointer now refers to memory that persists
-// beyond the function scope, ensuring that it's valid when later
-// referenced in the IfStmt.
-// See also https://craftinginterpreters.com/control-flow.html
 fn ifStatement(self: *Parser) Error!Stmt {
     _ = try self.consume(.left_paren, "Expect '(' after 'if'.");
     const condition = try self.expression();
@@ -448,15 +385,7 @@ fn whileStatement(self: *Parser) Error!Stmt {
     return stmt;
 }
 
-// for_stmt → "for" "(" ( varDecl | exprStmt | ";" ) expression? ";" expression? ")"
-//                statement ;
-//
-// The for loop syntax provides a convenient way to structure our code, but
-// it doesn't introduce any new capabilities beyond what we can achieve
-// with existing statements. If the for loop didn't have initializer
-// clauses, we could simply declare our variables before the loop.
-// Similarly, without an increment clause, we could handle that at the end
-// of the loop body ourselves.
+/// for_stmt → "for" "(" ( varDecl | exprStmt | ";" ) expression? ";" expression? ")" statement ;
 fn forStatement(self: *Parser) Error!Stmt {
     _ = try self.consume(.left_paren, "Expect '(' after 'for'.");
 
@@ -477,47 +406,38 @@ fn forStatement(self: *Parser) Error!Stmt {
 
     var body: *Stmt = try self.createStmt(try self.statement());
 
-    { // Simplifying the structure by processing in reverse order
-        if (increment) |expr| {
-            var list = std.ArrayList(Stmt).init(self.allocator);
-            errdefer list.deinit();
+    // Simplifying the structure by processing in reverse order:
+    //< 3
+    if (increment) |expr| {
+        var list = std.ArrayList(Stmt).init(self.allocator);
+        errdefer list.deinit();
 
-            try list.appendSlice(&[_]Stmt{ body.*, .{ .expr_stmt = expr } });
-            body = try self.createStmt(.{ .block = try list.toOwnedSlice() });
-        }
-
-        if (condition == null) condition = try self.createExpr(.{ .literal = .{ .bool = true } });
-        body = try self.createStmt(.{ .while_stmt = .{
-            .condition = condition.?,
-            .body = try self.createStmt(body.*),
-        } });
-
-        if (initializer) |stmt| {
-            var list = std.ArrayList(Stmt).init(self.allocator);
-            errdefer list.deinit();
-            try list.appendSlice(&[_]Stmt{ stmt, body.* });
-            body = try self.createStmt(.{ .block = try list.toOwnedSlice() });
-        }
+        try list.appendSlice(&[_]Stmt{ body.*, .{ .expr_stmt = expr } });
+        body = try self.createStmt(.{ .block = try list.toOwnedSlice() });
+    }
+    //< 2
+    if (condition == null) condition = try self.createExpr(.{
+        .literal = .{ .bool = true },
+    });
+    body = try self.createStmt(.{ .while_stmt = .{
+        .condition = condition.?,
+        .body = try self.createStmt(body.*),
+    } });
+    //< 1
+    if (initializer) |stmt| {
+        var list = std.ArrayList(Stmt).init(self.allocator);
+        errdefer list.deinit();
+        try list.appendSlice(&[_]Stmt{ stmt, body.* });
+        body = try self.createStmt(.{ .block = try list.toOwnedSlice() });
     }
 
     return body.*;
 }
 
-// See https://gitlab.com/andreyorst/lox/-/blob/main/src/clojure/lox/parser.clj?ref_type=heads
-//
-// (defn- break-statement [tokens n]
-//   [(Break. (current tokens n))
-//     (consume tokens (inc n) :semicolon "Expect ';' after break.")])
-//
-// At runtime, a break statement causes execution to jump to the end of the
-// nearest enclosing loop and proceeds from there. Note that the break may
-// be nested inside other blocks and if statements that also need to be
-// exited.
 fn breakStatement(self: *Parser) Error!Stmt {
     const is_with_label = false;
     const value: ?*Expr = if (is_with_label) try self.expression() else null;
     _ = try self.consume(.semicolon, "Expect ';' after 'break'.");
-
     const stmt: Stmt = .{ .break_stmt = value };
 
     return stmt;
@@ -527,19 +447,14 @@ fn returnStatement(self: *Parser) Error!Stmt {
     const keyword = self.previous();
     const value: ?*Expr = if (!self.check(.semicolon)) try self.expression() else null;
     _ = try self.consume(.semicolon, "Expect ';' after return value.");
-
     const stmt: Stmt = .{ .return_stmt = .{
         .keyword = keyword,
         .value = value,
     } };
-    // root.tracesrc(@src(), "stmt: {}", .{stmt});
 
     return stmt;
 }
 
-// If the next token doesn’t look like any known kind of statement, we
-// assume it must be an expression statement. final fallthrough case, since
-// it’s hard to proactively recognize an expression from its first token.
 fn statement(self: *Parser) Error!Stmt {
     if (self.match(.{.@"if"})) return self.ifStatement();
     if (self.match(.{.@"for"})) return self.forStatement();
@@ -551,7 +466,6 @@ fn statement(self: *Parser) Error!Stmt {
     return self.expressionStatement(); // finally identifier
 }
 
-/// Requires and consumes an identifier token for the variable name; and handles either assignment or no assignment.
 fn varDeclaration(self: *Parser) Error!Stmt {
     const name = try self.consume(.identifier, "Expect variable name.");
     const value = if (self.match(.{.equal})) try self.expression() else null;
@@ -576,8 +490,13 @@ fn fnDeclaration(self: *Parser, comptime kind: []const u8) Error!Stmt {
         var do = true;
         while (do or self.match(.{.comma})) {
             do = false;
-            if (parameters.items.len >= 255) return parseError(self.peek(), "Can't have more than 255 parameters.");
-            try parameters.append(try self.consume(.identifier, "Expect parameter name."));
+            if (parameters.items.len >= 255) {
+                return parseError(self.peek(), "Can't have more than 255 parameters.");
+            }
+            try parameters.append(try self.consume(
+                .identifier,
+                "Expect parameter name.",
+            ));
         }
     }
     _ = try self.consume(.right_paren, "Expect ')' after parameters.");
@@ -596,7 +515,6 @@ fn fnDeclaration(self: *Parser, comptime kind: []const u8) Error!Stmt {
     return .{ .function = fun.* };
 }
 
-// See https://github.com/jwmerrill/zig-lox/blob/main/src/compiler.zig#L326
 fn declaration(self: *Parser) Allocator.Error!?Stmt {
     const stmt_result = blk: {
         break :blk if (self.match(.{.class}))
@@ -610,7 +528,7 @@ fn declaration(self: *Parser) Allocator.Error!?Stmt {
     };
 
     return (stmt_result) catch |err| switch (err) {
-        error.ParseError, error.IoError => blk: {
+        Error.parse_error, Error.io_error => blk: {
             self.synchronize();
             break :blk null;
         },
@@ -620,14 +538,12 @@ fn declaration(self: *Parser) Allocator.Error!?Stmt {
 
 pub fn parseExpression(self: *Parser) Allocator.Error!?*Expr {
     return self.expression() catch |err| switch (err) {
-        error.ParseError => null,
-        error.IoError => null,
+        Error.parse_error => null,
+        Error.io_error => null,
         else => |other| other,
     };
 }
 
-/// The caller owns the returned memory. Empties this ArrayList, Its
-/// capacity is cleared, making deinit() safe but unnecessary to call.
 pub fn parse(self: *Parser) Allocator.Error![]Stmt {
     var statements = std.ArrayList(Stmt).init(self.allocator);
     while (!self.isAtEnd()) {
@@ -707,3 +623,123 @@ pub fn parse(self: *Parser) Allocator.Error![]Stmt {
 // unions.
 // This allows for memory savings if the struct or union has padding, and
 // obtain a slice of field values.
+
+// Docs
+
+// parse()
+// The caller owns the returned memory. Empties this ArrayList, Its
+// capacity is cleared, making deinit() safe but unnecessary to call.
+
+// declaration()
+// See https://github.com/jwmerrill/zig-lox/blob/main/src/compiler.zig#L326
+
+// varDeclaration()
+// Requires and consumes an identifier token for the variable name; and
+// handles either assignment or no assignment.
+
+// statement()
+// If the next token doesn’t look like any known kind of statement, we
+// assume it must be an expression statement. final fallthrough case, since
+// it’s hard to proactively recognize an expression from its first token.
+
+// breakStatement()
+// See https://gitlab.com/andreyorst/lox/-/blob/main/src/clojure/lox/parser.clj?ref_type=heads
+//
+// (defn- break-statement [tokens n]
+//   [(Break. (current tokens n))
+//     (consume tokens (inc n) :semicolon "Expect ';' after break.")])
+//
+// At runtime, a break statement causes execution to jump to the end of the
+// nearest enclosing loop and proceeds from there. Note that the break may
+// be nested inside other blocks and if statements that also need to be
+// exited.
+
+// forStatement()
+// The for loop syntax provides a convenient way to structure our code, but
+// it doesn't introduce any new capabilities beyond what we can achieve
+// with existing statements. If the for loop didn't have initializer
+// clauses, we could simply declare our variables before the loop.
+// Similarly, without an increment clause, we could handle that at the end
+// of the loop body ourselves.
+
+// ifStatement()
+// createStmt uses the allocator to allocate memory on the heap, avoiding
+// stack lifetime issues. By dynamically allocating the then_branch, we
+// avoid referencing memory that would be invalidated after the function
+// returns. The then_branch pointer now refers to memory that persists
+// beyond the function scope, ensuring that it's valid when later
+// referenced in the IfStmt.
+// See also https://craftinginterpreters.com/control-flow.html
+
+// block()
+// nb. Having block() return the raw list of statements and leaving it to
+// statement() to wrap the list in a Stmt.Block looks a little odd. I did it
+// that way because we’ll reuse block() later for parsing function bodies and
+// we don’t want that body wrapped in a Stmt.Block.
+
+// synchronize()
+// In a recursive descent parser, state is managed by the call stack. To
+// reset during synchronization, `ParseError` error are thrown and caught at
+// statement boundaries. The parser discards tokens until a likely statement
+// boundary (semicolon or keyword) is reached, preventing cascaded errors and
+// allowing parsing to continue.
+
+// expression()
+// The difference is that the left-hand side of an assignment isn’t an
+// expression that evaluates to a value. It’s a sort of
+// pseudo-expression that evaluates to a “thing” you can assign to.
+
+// assignment()
+// Enhances single token of lookahead similar to binary operators like `+`.
+//
+// Consider:
+//
+//   var a = "before";
+//   a = "value";
+//
+// On the second line, we don’t evaluate a (which would return the
+// string “before”). We figure out what variable a refers to so we know
+// where to store the right-hand side expression’s value. The classic
+// terms for these two constructs are l-value and r-value. All of the
+// expressions that we’ve seen so far that produce values are r-values.
+// An l-value “evaluates” to a storage location that you can assign
+// into.
+// In fact, the names come from assignment expressions: l-values appear
+// on the left side of the = in an assignment, and r-values on the right.
+//
+// Parse "lhs", which can be any expression of higher precedence.
+// previously: try self.equality();
+//
+// When we find an `=`, we parse right-hand side, and then wrap it all
+// up in an assignment expression tree node. Since assignment is
+// right-associative, recursively call 'assignment()' to parse "rhs".
+//
+// The trick is to look at "lhs" expression and figure out what kind of
+// assignment target it is - **just before we create** the assignment
+// expression node!
+//
+// This conversion works as every valid assignment target happens
+// to also be valid syntax as a normal expression.
+//
+// We report an error if the left-hand side isn’t a valid
+// assignment target, but we don’t throw it because the parser
+// isn’t in a confused state where we need to go into panic mode
+// and synchronize. That ensures we report an error on code such as
+// `a + b = c;`
+
+// orExpr()
+// Calls andExpr() (next higher precedence level) for its operands.
+// Parsing a series of `or` expressions mirrors other binary operators.
+
+// andExpr()
+// Calls equality() for its operands.
+
+// call()
+// Similar to how we parse infix operators. First, we parse a primary
+// expression, the “left operand” to the call. Then, each time we see a (,
+// we call finishCall() to parse the call expression using the previously
+// parsed expression as the callee. The returned expression becomes the new
+// expr and we loop to see if the result is itself called.
+
+// advance()
+// Increments current counter and returns the token if is not at end.
