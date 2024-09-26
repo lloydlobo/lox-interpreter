@@ -1,18 +1,32 @@
-EXE := ./zig-out/bin/main
-
-TEST_FLAGS :=  -freference-trace
-# TEST_FLAGS = 
-
 ifeq ($(OS),Windows_NT)
 	UNAME_S := Windows
+	EXE := .\\zig-out\\bin\\main.exe
 else
 	UNAME_S := $(shell uname -s)
+	EXE := ./zig-out/bin/main
 endif
+
+define generate_sources
+	$(wildcard src/*.zig)
+endef # or use `$(shell find src -name '*.zig')`
+
+SRCS := $(call generate_sources)
+TEST_FLAGS :=  -freference-trace
+VALGRIND := valgrind --leak-check=full --show-leak-kinds=all -s --track-origins=yes
 
 .PHONY: clean
 clean:
 	@date && echo $(UNAME_S)
-	rm -rf zig-out zig-cache
+	rm -rf zig-out .zig-cache vgcore.*
+	echo $$?
+
+.PHONY: ast-check
+ast-check:
+	@printf "Running ast-check\n└─\x1b[37m$(SRCS)\x1b[0m\n"
+	@$(foreach src,$(call generate_sources), \
+		# echo "Running ast-check on $(src)"; \
+		zig ast-check $(src); \
+	)
 
 .PHONY: test
 test:
@@ -23,7 +37,6 @@ test:
 	zig test src/test_expressions_evaluate.zig $(TEST_FLAGS) 2>&1 | head &
 	zig test src/test_expressions_parse.zig    $(TEST_FLAGS) 2>&1 | head &
 	zig test src/test_scanning.zig             $(TEST_FLAGS) 2>&1 | head &
-
 	wait
 
 .PHONY: watch-test
@@ -34,7 +47,8 @@ watch-test:
 .PHONY: build-run
 build-run:
 	@date && echo $(UNAME_S)
-	zig ast-check src/main.zig
+
+	make ast-check
 	zig build run --summary all
 
 #
@@ -44,41 +58,49 @@ build-run:
 .PHONY: tokenize parse evaluate run
 
 tokenize:
-	@zig build
+	@make ast-check
+	@zig build --summary all
 	@$(EXE) tokenize test.lox && echo
 
 parse:
-	@zig build
+	@make ast-check
+	@zig build --summary all
 	@$(EXE) parse test.lox && echo
 
 evaluate:
-	@zig build
+	@make ast-check
+	@zig build --summary all
 	@$(EXE) evaluate test.lox && echo
 
 run:
-	zig ast-check src/main.zig
-	@zig build
+	@make ast-check
+	@zig build --summary all
 	@$(EXE) run test.lox && echo
 
 
 .PHONY: valgrind-tokenize valgrind-parse valgrind-evaluate valgrind-run
 
+# @for src in $(SRCS); do echo "Running ast-check on $$src"; zig ast-check $$src; done
+pre-valgrind:
+	make ast-check
+	@echo "Building project from build.zig"
+	zig build --summary all
+
 valgrind-tokenize:
-	zig ast-check src/main.zig
-	zig build
-	valgrind --leak-check=full --show-leak-kinds=all -s --track-origins=yes $(EXE) tokenize test.lox
+	make -j4 pre-valgrind
+	$(VALGRIND) $(EXE) tokenize test.lox
 
 valgrind-parse:
-	zig build
-	valgrind --leak-check=full --show-leak-kinds=all -s --track-origins=yes $(EXE) parse test.lox
+	make -j4 pre-valgrind
+	$(VALGRIND) $(EXE) parse test.lox
 
 valgrind-evaluate:
-	zig build
-	valgrind --leak-check=full --show-leak-kinds=all -s --track-origins=yes $(EXE) evaluate test.lox
+	make -j4 pre-valgrind
+	$(VALGRIND) $(EXE) evaluate test.lox
 
 valgrind-run:
-	zig build
-	valgrind --leak-check=full --show-leak-kinds=all -s --track-origins=yes $(EXE) run test.lox
+	make -j4 pre-valgrind
+	$(VALGRIND) $(EXE) run test.lox
 
 
 .PHONY: all

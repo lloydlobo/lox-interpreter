@@ -6,7 +6,6 @@ const formatNumber = @import("root.zig").formatNumber;
 
 const Token = @This();
 
-// pub const Token: type = struct {
 lexeme: []const u8,
 literal: ?Literal,
 type: Type,
@@ -114,7 +113,6 @@ pub fn format(self: Token, comptime _: []const u8, _: std.fmt.FormatOptions, wri
         self.literal,
     });
 }
-// };
 
 // copied from lib/std/multi_array_list.zig
 test "basic usage with MultiArrayList" {

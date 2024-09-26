@@ -17,7 +17,6 @@ const COLOR_YELLOW = "\x1b[33m";
 const COLOR_BLUE = "\x1b[34m";
 const COLOR_CYAN = "\x1b[36m";
 const COLOR_WHITE = "\x1b[37m";
-
 comptime {
     assert(1 << 1 == 2);
     assert(1 << 2 == 4);
@@ -32,7 +31,6 @@ comptime {
     assert(1 << 11 == 2048);
     assert(1 << 12 == 4096);
 }
-
 const debug_trace_flags: [7]bool = .{
     debug.is_trace_compiler,
     debug.is_trace_environment,
@@ -42,16 +40,16 @@ const debug_trace_flags: [7]bool = .{
     debug.is_trace_scanner,
     debug.is_trace_virtual_machine,
 };
-
 /// NOTE: `@src() std.builtin.SourceLocation` ─ Must be called in a function.
 pub fn tracesrc(comptime src: anytype, comptime fmt: []const u8, args: anytype) void {
     if (comptime any(bool, debug_trace_flags, null)) {
         const src_fmt = "{s}{s}:{s}:{d}:{d}{s}";
-        const src_args = .{ COLOR_GREEN, src.file, src.fn_name, src.line, src.column, COLOR_RESET };
-        const args_fmt = "\n\t" ++ COLOR_YELLOW ++ "└─ " ++ COLOR_CYAN ++ fmt ++ COLOR_RESET;
+        const src_args = .{ COLOR_WHITE, src.file, src.fn_name, src.line, src.column, COLOR_RESET };
+        const args_fmt = "\n" ++ COLOR_YELLOW ++ "└─ " ++ COLOR_CYAN ++ fmt ++ COLOR_RESET;
 
         var buffer: [1 << 11]u8 = undefined;
         var stream = std.io.fixedBufferStream(&buffer);
+
         const writer = stream.writer();
         std.fmt.format(writer, src_fmt, src_args) catch |err| exit(1, "{}", .{err});
         std.fmt.format(writer, args_fmt, args) catch |err| exit(1, "{}", .{err});
@@ -69,13 +67,17 @@ pub fn exit(status: u8, comptime fmt: []const u8, args: anytype) noreturn {
 
 // See also https://stackoverflow.com/a/74187657
 pub fn print(comptime fmt: []const u8, args: anytype) void {
-    const w = std.io.getStdOut().writer();
-    w.print(fmt, args) catch |err| exit(100, "Failed to write to stdout: {}", .{err});
+    const writer = std.io.getStdOut().writer();
+    writer.print(fmt, args) catch |err| {
+        exit(100, "Failed to write to stdout: {}", .{err});
+    };
 }
 
 pub fn eprint(comptime fmt: []const u8, args: anytype) void {
-    const w = std.io.getStdErr().writer();
-    w.print(fmt, args) catch |err| exit(100, "Failed to write to stdout: {}", .{err});
+    const writer = std.io.getStdErr().writer();
+    writer.print(fmt, args) catch |err| {
+        exit(100, "Failed to write to stdout: {}", .{err});
+    };
 }
 
 pub fn stdout() std.fs.File {
@@ -86,10 +88,10 @@ pub fn stderr() std.fs.File {
     return std.io.getStdErr();
 }
 
-pub fn isAlphaNumeric(c: u8) bool {
+pub inline fn isAlphaNumeric(c: u8) bool {
     return switch (c) {
         '_', 'a'...'z', 'A'...'Z', '0'...'9' => true,
-        else => false,
+        inline else => false,
     };
 }
 
@@ -133,6 +135,7 @@ pub fn unionPayloadPtr(comptime T: type, union_ptr: anytype) ?*T {
 
     return null;
 }
+
 test "unionPayloadPtr" {
     const Tagged = union(enum) {
         A: i32,
@@ -155,20 +158,32 @@ test "unionPayloadPtr" {
 /// Causes compile error when items do not have a known length.
 pub inline fn any(comptime T: type, comptime items: anytype, comptime predicateFn: ?fn (T) bool) bool {
     return comptime blk: {
-        if (std.meta.Elem(@TypeOf(items)) != T)
+        if (std.meta.Elem(@TypeOf(items)) != T) {
             @compileError("items must be indexable (e.g., array or slice)");
-        if (items.len == 0) // FIXME: This only tests for .{} slices and not dynamically memory allocated ones
+        }
+        // FIXME: Only checks .{} slices and not memory allocated ones.
+        if (items.len == 0) {
             @compileError("items must have a known length");
+        }
         for (items) |item| {
             if (predicateFn) |predicate| {
-                if (predicate(item)) break :blk true;
+                if (predicate(item)) {
+                    break :blk true;
+                }
             } else switch (T) {
-                bool => if (item) break :blk true,
+                bool => {
+                    if (item) {
+                        break :blk true;
+                    }
+                },
                 inline else => break :blk false,
             }
-        } else break :blk false;
+        } else {
+            break :blk false;
+        }
     };
 }
+
 test "any ─ basic usage" {
     // zig fmt: off
     {

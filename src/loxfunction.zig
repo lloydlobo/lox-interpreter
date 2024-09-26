@@ -22,12 +22,12 @@ allocator: Allocator,
 closure: *Environment,
 declaration: Stmt.Function,
 
-pub fn handleRuntimeError(self: *FunctionContext, err: Interpreter.Error) void {
+fn handleRuntimeError(self: *FunctionContext, err: Interpreter.Error) void {
     root.eprint("Error in function: '{s}': ", .{self.declaration.name.lexeme});
     Interpreter.handleRuntimeError(err) catch |e| root.exit(@intFromEnum(ErrorCode.runtime_error), "{any}.", .{e});
 }
 
-pub fn handleRuntimeErrorAndExit(self: *FunctionContext, err: Interpreter.Error) noreturn {
+fn handleRuntimeErrorAndExit(self: *FunctionContext, err: Interpreter.Error) noreturn {
     self.handleRuntimeError(err);
     root.exit(@intFromEnum(ErrorCode.runtime_error), "{any}", .{err});
 }
