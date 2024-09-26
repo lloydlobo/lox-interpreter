@@ -1,10 +1,7 @@
-//! See https://craftinginterpreters.com/appendix-ii.html#expressions
-
 const std = @import("std");
 const assert = std.debug.assert;
 
 const Interpreter = @import("interpreter.zig");
-// const Obj = @import("object.zig").Obj;
 const Token = @import("token.zig");
 const formatNumber = @import("root.zig").formatNumber;
 
@@ -46,10 +43,6 @@ pub const Expr = union(enum) {
         right: *Expr,
     };
 
-    // pub const LoxReturn = union(enum) {
-    //     Nil: Value.Nil,
-    //     Ret: Value,
-    // };
     pub const LoxReturnValue = union(enum) {
         nil: void,
         ret: Value,
@@ -100,22 +93,9 @@ pub const Expr = union(enum) {
             }
         };
 
-        // pub fn HashMap(
-        //     comptime K: type,
-        //     comptime V: type,
-        //     comptime Context: type,
-        //     comptime max_load_percentage: u64,
-        // ) type {
-        //     return struct {
-        //         unmanaged: Unmanaged,
-        //         allocator: Allocator,
-        //         ctx: Context,
-        //
-        //         comptime {
-        //             verifyContext(Context, K, K, u64, false);
-        //         }
         pub const LoxFunction = struct {
-            context: *anyopaque, // Context pointer to hold function-specific data. e.g. `FunctionContext`
+            /// `Context` pointer to hold function-specific data.
+            context: *anyopaque,
 
             arityFn: *const fn (*anyopaque) usize,
             callFn: *const fn (*anyopaque, *Interpreter, []Value) Value,
@@ -134,13 +114,6 @@ pub const Expr = union(enum) {
             }
         };
 
-        // pub fn isObj(self: Value) bool {
-        //     // See https://github.com/raulgrell/zox/blob/master/src/value.zig#L46
-        //     // See https://github.com/raulgrell/zox/blob/master/src/value.zig#L250
-        //     return self == .obj;
-        // }
-
-        // See https://gitlab.com/andreyorst/lox/-/blob/main/src/zig/lox/value.zig?ref_type=heads#L253
         pub inline fn from(x: anytype) Value {
             return switch (@TypeOf(x)) {
                 usize, i32, comptime_int => Value{ .num = @as(f64, @floatFromInt(x)) },
@@ -165,6 +138,8 @@ pub const Expr = union(enum) {
     };
 };
 
+// See https://craftinginterpreters.com/appendix-ii.html#expressions
+//
 // A2.1 Expressions
 //
 // Expressions are the first syntax tree nodes we see, introduced in
@@ -218,3 +193,14 @@ pub const Expr = union(enum) {
 // "Literal  : Object value"
 //
 // arguments: []*Expr, // → expression ( "," expression )* ;
+
+// Docs
+
+// Value.LoxReturnValue
+// If we have a return value, we evaluate it, otherwise, we use nil.
+// Then we take that value and wrap it in a custom exception class and
+// throw it. We want this to unwind all the way to where the function
+// call began, the call() method in LoxFunction.
+
+// Value.from()
+// See https://gitlab.com/andreyorst/lox/-/blob/main/src/zig/lox/value.zig?ref_type=heads#L253
