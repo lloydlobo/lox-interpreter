@@ -11,7 +11,7 @@ define generate_sources
 endef # or use `$(shell find src -name '*.zig')`
 
 SRCS := $(call generate_sources)
-TEST_FLAGS :=  -freference-trace
+TRACE_FLAGS :=  -freference-trace
 VALGRIND := valgrind --leak-check=full --show-leak-kinds=all -s --track-origins=yes
 
 .PHONY: clean
@@ -33,10 +33,10 @@ test:
 	@date && echo $(UNAME_S)
 
 	# capture both stdout and stderr
-	zig test src/test_statements_and_state.zig $(TEST_FLAGS) 2>&1 | head &
-	zig test src/test_expressions_evaluate.zig $(TEST_FLAGS) 2>&1 | head &
-	zig test src/test_expressions_parse.zig    $(TEST_FLAGS) 2>&1 | head &
-	zig test src/test_scanning.zig             $(TEST_FLAGS) 2>&1 | head &
+	zig test src/test_statements_and_state.zig $(TRACE_FLAGS) 2>&1 | head &
+	zig test src/test_expressions_evaluate.zig $(TRACE_FLAGS) 2>&1 | head &
+	zig test src/test_expressions_parse.zig    $(TRACE_FLAGS) 2>&1 | head &
+	zig test src/test_scanning.zig             $(TRACE_FLAGS) 2>&1 | head &
 	wait
 
 .PHONY: watch-test
@@ -88,19 +88,19 @@ pre-valgrind:
 
 valgrind-tokenize:
 	make -j4 pre-valgrind
-	$(VALGRIND) $(EXE) tokenize test.lox
+	$(VALGRIND) $(EXE) tokenize test.lox $(TRACE_FLAGS)
 
 valgrind-parse:
 	make -j4 pre-valgrind
-	$(VALGRIND) $(EXE) parse test.lox
+	$(VALGRIND) $(EXE) parse test.lox $(TRACE_FLAGS)
 
 valgrind-evaluate:
 	make -j4 pre-valgrind
-	$(VALGRIND) $(EXE) evaluate test.lox
+	$(VALGRIND) $(EXE) evaluate test.lox $(TRACE_FLAGS)
 
 valgrind-run:
 	make -j4 pre-valgrind
-	$(VALGRIND) $(EXE) run test.lox
+	$(VALGRIND) $(EXE) run test.lox $(TRACE_FLAGS)
 
 
 .PHONY: all
