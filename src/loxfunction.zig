@@ -6,7 +6,6 @@ const Allocator = mem.Allocator;
 const assert = std.debug.assert;
 
 const Environment = @import("environment.zig");
-const ErrorCode = @import("main.zig").ErrorCode;
 const Expr = @import("expr.zig").Expr;
 const Value = Expr.Value;
 const LoxFunction = Value.LoxFunction;
@@ -24,14 +23,19 @@ declaration: Stmt.Function,
 
 fn handleRuntimeError(self: *FunctionContext, err: Interpreter.Error) void {
     root.eprint("Error in function: '{s}': ", .{self.declaration.name.lexeme});
-    Interpreter.handleRuntimeError(err) catch |e| root.exit(@intFromEnum(ErrorCode.runtime_error), "{any}.", .{e});
+    Interpreter.handleRuntimeError(err) catch |e| root.exit(.runtime_error, "{any}.", .{e});
 }
 
 fn handleRuntimeErrorAndExit(self: *FunctionContext, err: Interpreter.Error) noreturn {
     self.handleRuntimeError(err);
-    root.exit(@intFromEnum(ErrorCode.runtime_error), "{any}", .{err});
+    root.exit(.runtime_error, "{any}", .{err});
 }
 
+/// When we create a LoxFunction, we capture the current environment. This is
+/// the environment that is active when the function is declared not when it’s
+/// called, which is what we want. It represents the lexical scope surrounding
+/// the function declaration. Finally, when we call the function, we use that
+/// environment as the call’s parent instead of going straight to globals.
 pub fn makeLoxFunction(allocator: Allocator, declaration: Stmt.Function, closure: *Environment) Allocator.Error!*LoxFunction {
     const context = try allocator.create(FunctionContext);
     errdefer allocator.destroy(context);
