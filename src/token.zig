@@ -85,10 +85,6 @@ pub const Type = enum {
     @"var",
     @"while",
 
-    //
-    // whitespace,
-    //
-    // comment,
     ///      10
     eof,
 };

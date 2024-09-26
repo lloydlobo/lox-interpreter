@@ -149,7 +149,8 @@ pub const Scanner = struct {
         try self.addTokenValue(.string, .{ .str = str }); // trim the surrounding quotes
     }
 
-    /// Similar to a conditional lookahead `advance()`. We only consume the current character if it’s what we’re looking for.
+    /// Similar to a conditional lookahead `advance()`. We only consume the
+    /// current character if it’s what we’re looking for.
     fn match(self: *Scanner, expected: u8) bool {
         if (self.isAtEnd())
             return false;

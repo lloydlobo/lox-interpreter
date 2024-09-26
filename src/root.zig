@@ -8,6 +8,33 @@ const Allocator = mem.Allocator;
 
 const debug = @import("debug.zig");
 
+pub const ErrorCode = enum(u8) {
+    exit_success = 0,
+    exit_failure = 1,
+    syntax_error = 65,
+    runtime_error = 70,
+
+    pub fn fromInt(comptime T: type, error_code: u8) ?ErrorCode {
+        assert(T == u8);
+        return inline for (comptime std.meta.fields(ErrorCode)) |field| {
+            if (error_code == @intFromEnum(@field(ErrorCode, field.name))) {
+                return @field(ErrorCode, field.name);
+            }
+        } else null;
+    }
+
+    pub inline fn toString(comptime self: ErrorCode) []const u8 {
+        comptime {
+            return switch (self) {
+                .exit_success => "exit success",
+                .exit_failure => "exit failure",
+                .syntax_error => "syntax error",
+                .runtime_error => "runtime error",
+            };
+        }
+    }
+};
+
 // ANSI color codes
 const COLOR_RESET = "\x1b[0m";
 const COLOR_BOLD = "\x1b[1m";
@@ -17,6 +44,7 @@ const COLOR_YELLOW = "\x1b[33m";
 const COLOR_BLUE = "\x1b[34m";
 const COLOR_CYAN = "\x1b[36m";
 const COLOR_WHITE = "\x1b[37m";
+
 comptime {
     assert(1 << 1 == 2);
     assert(1 << 2 == 4);
@@ -31,6 +59,7 @@ comptime {
     assert(1 << 11 == 2048);
     assert(1 << 12 == 4096);
 }
+
 const debug_trace_flags: [7]bool = .{
     debug.is_trace_compiler,
     debug.is_trace_environment,
@@ -40,6 +69,7 @@ const debug_trace_flags: [7]bool = .{
     debug.is_trace_scanner,
     debug.is_trace_virtual_machine,
 };
+
 /// NOTE: `@src() std.builtin.SourceLocation` ─ Must be called in a function.
 pub fn tracesrc(comptime src: anytype, comptime fmt: []const u8, args: anytype) void {
     if (comptime any(bool, debug_trace_flags, null)) {
@@ -51,32 +81,32 @@ pub fn tracesrc(comptime src: anytype, comptime fmt: []const u8, args: anytype) 
         var stream = std.io.fixedBufferStream(&buffer);
 
         const writer = stream.writer();
-        std.fmt.format(writer, src_fmt, src_args) catch |err| exit(1, "{}", .{err});
-        std.fmt.format(writer, args_fmt, args) catch |err| exit(1, "{}", .{err});
+        std.fmt.format(writer, src_fmt, src_args) catch |err| exit(.exit_failure, "{}", .{err});
+        std.fmt.format(writer, args_fmt, args) catch |err| exit(.exit_failure, "{}", .{err});
 
-        const pos = writer.context.*.getPos() catch |err| exit(1, "{}", .{err});
+        const pos = writer.context.*.getPos() catch |err| exit(.exit_failure, "{}", .{err});
         std.log.debug("{s}", .{buffer[0..pos]});
     }
 }
 
 // Copied from gitlab.com/andreorst/lox
-pub fn exit(status: u8, comptime fmt: []const u8, args: anytype) noreturn {
+pub fn exit(status: ErrorCode, comptime fmt: []const u8, args: anytype) noreturn {
     eprint(fmt, args);
-    std.process.exit(status);
+    std.process.exit(@intFromEnum(status));
 }
 
 // See also https://stackoverflow.com/a/74187657
 pub fn print(comptime fmt: []const u8, args: anytype) void {
     const writer = std.io.getStdOut().writer();
     writer.print(fmt, args) catch |err| {
-        exit(100, "Failed to write to stdout: {}", .{err});
+        exit(.runtime_error, "Failed to write to stdout: {}", .{err});
     };
 }
 
 pub fn eprint(comptime fmt: []const u8, args: anytype) void {
     const writer = std.io.getStdErr().writer();
     writer.print(fmt, args) catch |err| {
-        exit(100, "Failed to write to stdout: {}", .{err});
+        exit(.runtime_error, "Failed to write to stdout: {}", .{err});
     };
 }
 
@@ -127,10 +157,17 @@ pub const LoxError = error{
 /// [See also](https://github.com/ziglang/zig/blob/7b5d139fd30a7225f073125b8a53e51a2454d223/lib/std/json.zig#L2811)
 pub fn unionPayloadPtr(comptime T: type, union_ptr: anytype) ?*T {
     const U = @typeInfo(@TypeOf(union_ptr)).Pointer.child;
+
     const info = @typeInfo(U).Union;
+
     inline for (info.fields, 0..) |u_field, i| {
-        if (u_field.type != T) continue;
-        if (@intFromEnum(union_ptr.*) == i) return &@field(union_ptr, u_field.name);
+        if (u_field.type != T) {
+            continue;
+        }
+
+        if (@intFromEnum(union_ptr.*) == i) {
+            return &@field(union_ptr, u_field.name);
+        }
     }
 
     return null;
@@ -268,4 +305,3 @@ test "any ─ with empty array" { // This test should fail to compile
 //     pub fn write(self: *Writer, bytes: []const u8) anyerror!usize {
 //         return self.writeFn(self, bytes);
 //     }
-// };

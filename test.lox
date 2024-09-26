@@ -1,5 +1,14 @@
 // test.lox
 
+// This executes a return statement, but it’s not even inside a function at
+// all. It’s top-level code. I don’t know what the user thinks is going to
+// happen, but I don’t think we want Lox to allow this.
+//
+// We can extend the resolver to detect this statically. Much like we track
+// scopes as we walk the tree, we can track whether or not the code we are
+// currently visiting is inside a function declaration.
+return "at top level";
+
 
 if (true) {
     print "Functions - Return Statement";
