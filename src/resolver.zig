@@ -12,46 +12,40 @@ const StringHashMap = std.StringHashMap;
 
 const Expr = @import("expr.zig").Expr;
 const Interpreter = @import("interpreter.zig");
+const main = @import("main.zig");
 const root = @import("root.zig");
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
 
-pub const ResolveError = error{ // InvalidSuper, InvalidThis, SelfInheritance,
-    AlreadyDeclared,
-    InvalidReturn,
-    UndefinedVariable,
-};
-pub const Error = ResolveError || Allocator.Error;
-const Type = union(enum) {
-    pub const Function = enum {
-        none,
-        function,
-        initializer,
-        method,
-    };
-
-    pub const Class = enum {
-        none,
-        class,
-        subclass,
-    };
-};
-
+/// Static analysis before running interpretter.
 const Resolver = @This(); // Struct File
 
 allocator: Allocator,
-interpreter: *Interpreter,
-locals: StringHashMap(usize),
-/// Each element in the stack is a Map representing a single block scope.
-/// * Keys, as in Environment, are variable names.
-/// * The values are Booleans, for a reason I’ll explain soon.
-scopes: ArrayList(StringHashMap(bool)),
+interpreter: *Interpreter, // provides locals: AutoHashMap(*Expr, usize),
+scopes: ArrayList(BlockScope),
+current_function: FunctionType = FunctionType.none,
+
+/// Keys, as in Environment, are variable names.
+/// The values are Booleans, for a reason I’ll explain soon.
+const BlockScope = StringHashMap(bool);
+
+const FunctionType = enum {
+    none,
+    function,
+    initializer,
+    method,
+};
+
+const ClassType = enum {
+    none,
+    class,
+    subclass,
+};
 
 pub fn init(allocator: Allocator, interpreter: *Interpreter) Resolver {
     const self: Resolver = .{
         .allocator = allocator,
         .interpreter = interpreter,
-        .locals = StringHashMap(usize).init(allocator),
         .scopes = ArrayList(StringHashMap(bool)).init(allocator),
     };
 
@@ -59,11 +53,19 @@ pub fn init(allocator: Allocator, interpreter: *Interpreter) Resolver {
 }
 
 pub fn deinit(self: *Resolver) void {
-    for (self.scopes.items) |*scope| {
-        scope.deinit();
-    }
-    self.scopes.deinit();
-    self.locals.deinit();
+    _ = self;
+    std.log.warn("Tried to deinit unimplemented Resolver.deinit()", .{});
+}
+
+fn isEmptyScopes(self: *Resolver) bool {
+    return (self.scopes.items.len == 0);
+}
+
+fn getLastOrNullScopesPtr(self: *Resolver) ?*BlockScope {
+    return if (!self.isEmptyScopes())
+        &self.scopes.items[self.scopes.items.len - 1]
+    else
+        null;
 }
 
 fn beginScope(self: *Resolver) Error!void {
@@ -72,6 +74,23 @@ fn beginScope(self: *Resolver) Error!void {
     // like a stack. The interpreter implements that stack using a linked list—the
     // chain of Environment objects.
     try self.scopes.append(StringHashMap(bool).init(self.allocator));
+}
+
+pub const ResolveError = error{ // InvalidSuper, InvalidThis, SelfInheritance,
+    AlreadyDeclared,
+    InvalidReturn,
+    UndefinedVariable,
+};
+
+pub const Error = ResolveError || Allocator.Error;
+
+pub fn handleResolveError(err: Error, token: Token, comptime fmt: []const u8, args: anytype) Allocator.Error!void {
+    return switch (err) {
+        error.AlreadyDeclared => main.runtimeError(token, fmt, args),
+        error.InvalidReturn => main.runtimeError(token, fmt, args),
+        error.UndefinedVariable => main.runtimeError(token, fmt, args),
+        else => |other| other,
+    };
 }
 
 test "stack" {
@@ -115,7 +134,7 @@ fn endScope(self: *Resolver) void {
     // are more dynamic in Lox. When resolving a variable, if we can’t find it in
     // the stack of local scopes, we assume it must be global.
 
-    const scope = self.scopes.pop();
+    var scope: BlockScope = self.scopes.pop();
 
     var it = scope.iterator();
     while (it.next()) |entry| {
@@ -123,8 +142,10 @@ fn endScope(self: *Resolver) void {
         const is_used: bool = entry.value_ptr.*;
         const is_not_used = (!is_used and !mem.startsWith(u8, name, "_") and
             !mem.eql(u8, name, "this") and !mem.eql(u8, name, "super"));
-        if (is_not_used) root.eprint(("Warning: Unused local variable '{}'. " ++
-            "Start variable name with underscore if variable is unused.\n"), .{name});
+        if (is_not_used) {
+            root.eprint(("Warning: Unused local variable '{s}'. " ++
+                "Start variable name with underscore if variable is unused.\n"), .{name});
+        }
     }
 
     scope.deinit();
@@ -136,15 +157,18 @@ fn endScope(self: *Resolver) void {
 // with a key in the scope map represents whether or not we have finished
 // resolving that variable’s initializer.
 fn declare(self: *Resolver, name: Token) Error!void {
-    if (self.scopes.items.len == 0) return;
-
-    var scope = &self.scopes.items[self.scopes.items.len - 1]; // peek scope
-
-    return if (scope.contains(name.lexeme))
-        error.AlreadyDeclared
-    else {
-        try scope.put(name.lexeme, false);
-    };
+    if (self.getLastOrNullScopesPtr()) |scope_ptr| {
+        if (scope_ptr.contains(name.lexeme)) {
+            return handleResolveError(
+                ResolveError.AlreadyDeclared,
+                name,
+                "Already a variable with this name in this scope.",
+                .{},
+            );
+        } else {
+            try scope_ptr.put(name.lexeme, false);
+        }
+    } else return;
 }
 
 // After declaring the variable, we resolve its initializer expression in that
@@ -152,17 +176,74 @@ fn declare(self: *Resolver, name: Token) Error!void {
 // initializer expression is done, the variable is ready for prime time. We do
 // that by defining it.
 fn define(self: *Resolver, name: Token) Error!void {
-    if (self.scopes.items.len == 0) return;
-
-    var scope = &self.scopes.items[self.scopes.items.len - 1]; // peek scope
-    try scope.put(name.lexeme, true);
-
-    return;
+    if (self.getLastOrNullScopesPtr()) |scope_ptr| {
+        try scope_ptr.put(name.lexeme, true);
+    } else return;
 }
 
-pub fn resolveStatements(self: *Resolver, statements: []const Stmt) Error!void {
-    for (statements) |stmt| {
-        try resolveStatement(self, stmt);
+// private void resolveLocal(Expr expr, Token name) {
+//   for (int i = scopes.size() - 1; i >= 0; i--) {
+//     if (scopes.get(i).containsKey(name.lexeme)) {
+//       interpreter.resolve(expr, scopes.size() - 1 - i);
+//       return;
+//     }
+//   }
+// }
+fn resolveLocal(self: *Resolver, expr: *const Expr, name: Token) Error!void {
+    // This looks, for good reason, a lot like the code in Environment for
+    // evaluating a variable. We start at the innermost scope and work outwards,
+    // looking in each map for a matching name. If we find the variable, we resolve
+    // it, passing in the number of scopes between the current innermost scope and
+    // the scope where the variable was found. So, if the variable was found in the
+    // current scope, we pass in 0. If it’s in the immediately enclosing scope, 1.
+    const key = name.lexeme;
+    const stack_index: usize = self.scopes.items.len - 1;
+    var i: usize = stack_index;
+
+    while (i >= 0) : (i -= 1) {
+        const found_variable = self.scopes.items[i].contains(key);
+        if (found_variable) {
+            const scope_delta: usize = stack_index - i;
+            try self.interpreter.locals.put(@constCast(expr), scope_delta);
+            return;
+        }
+    }
+    // If we walk through all of the block scopes and never find the variable,
+    // we leave it unresolved and assume it’s global. We’ll get to the
+    // implementation of that resolve() method a little later. For now, let’s
+    // keep on cranking through the other syntax nodes.
+}
+
+fn resolveFunction(self: *Resolver, function: *const Stmt.Function, @"type": FunctionType) Error!void {
+    // We need to track not just that we’re in a function, but how many we’re in.
+
+    const enclosing_function = self.current_function;
+
+    // We could use an explicit stack of FunctionType values for that, but
+    // instead we’ll piggyback on the JVM. We store the previous value in a
+    // local on the Java stack. When we’re done resolving the function body, we
+    // restore the field to that value.
+
+    self.current_function = @"type";
+    defer self.current_function = enclosing_function;
+
+    try self.beginScope();
+    for (function.parameters) |parameter| {
+        try self.declare(parameter);
+        try self.define(parameter);
+    }
+    try self.resolveStatements(function.body);
+    self.endScope();
+}
+
+pub fn resolveStatements(self: *Resolver, statements: []const Stmt) Allocator.Error!void {
+    for (statements) |*stmt| {
+        resolveStatement(self, stmt) catch |err| {
+            if (root.unionPayloadPtr(Token, stmt)) |token_ptr| {
+                root.tracesrc(@src(), "Found payload ptr: {any}: {any}", .{ stmt, token_ptr });
+                return handleResolveError(err, token_ptr.*, "Failed to resolve statement '{any}'.", .{stmt});
+            }
+        };
     }
 }
 
@@ -184,28 +265,52 @@ pub fn resolveStatements(self: *Resolver, statements: []const Stmt) Error!void {
 /// See also:
 /// * https://craftinginterpreters.com/resolving-and-binding.html#a-resolver-class
 /// * https://gitlab.com/andreyorst/lox/-/blob/main/src/clojure/lox/resolver.clj?ref_type=heads
-pub fn resolveStatement(self: *Resolver, stmt: Stmt) Error!void {
-    switch (stmt) {
+pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
+    switch (stmt.*) {
         .block => |statements| {
             try self.beginScope();
             try self.resolveStatements(statements);
             self.endScope();
         },
-        .break_stmt => |_| {},
-        .expr_stmt => |_| {},
-        .function => |_| {},
-        .if_stmt => |_| {},
-        .print_stmt => |_| {},
-        .return_stmt => |_| {},
+        .break_stmt => |_| {
+            @panic("Unimplemented");
+        },
+        .expr_stmt => |expr_stmt| {
+            try self.resolveExpr(expr_stmt);
+        },
+        .function => |function| {
+            try self.declare(function.name);
+            try self.define(function.name);
+            try self.resolveFunction(&function, FunctionType.function);
+        },
+        .if_stmt => |if_stmt| {
+            try self.resolveExpr(if_stmt.condition);
+            try self.resolveStatement(if_stmt.then_branch);
+            if (if_stmt.else_branch) |else_branch| {
+                try self.resolveStatement(else_branch);
+            }
+        },
+        .print_stmt => |print_stmt| {
+            try self.resolveExpr(print_stmt);
+        },
+        .return_stmt => |return_stmt| {
+            if (return_stmt.value) |expr| {
+                try self.resolveExpr(expr);
+            }
+        },
+        // Resolving a variable declaration adds a new entry to the current
+        // innermost scope’s map.
         .var_stmt => |var_stmt| {
-            // Resolving a variable declaration adds a new entry to the current innermost scope’s map.
             try self.declare(var_stmt.name);
             if (var_stmt.initializer) |expr| {
                 try self.resolveExpr(expr);
             }
             try self.define(var_stmt.name);
         },
-        .while_stmt => |_| {},
+        .while_stmt => |while_stmt| {
+            try self.resolveExpr(while_stmt.condition);
+            try self.resolveStatement(while_stmt.body);
+        },
     }
 }
 
@@ -213,26 +318,62 @@ pub fn resolveStatement(self: *Resolver, stmt: Stmt) Error!void {
 // Interpreter—they turn around and apply the Visitor pattern to the given
 // syntax tree node.
 pub fn resolveExpr(self: *Resolver, expr: *Expr) Error!void {
-    _ = self;
     switch (expr.*) {
-        .assign => |_| {},
-        .binary => |_| {},
-        .call => |_| {},
-        .grouping => |_| {},
-        .literal => |_| {},
-        .logical => |_| {},
-        .unary => |_| {},
-        .variable => |_| {},
+        .assign => |assign| {
+            try self.resolveExpr(assign.value);
+            // Resolve reference to other variables.
+            try self.resolveLocal(assign.value, assign.name);
+        },
+        .binary => |binary| {
+            try self.resolveExpr(binary.left);
+            try self.resolveExpr(binary.right);
+        },
+        .call => |call| {
+            try self.resolveExpr(call.callee);
+            for (call.arguments) |argument| {
+                try self.resolveExpr(argument);
+            }
+        },
+        .grouping => |grouping| {
+            try self.resolveExpr(grouping);
+        },
+        .literal => |_| {
+            // A literal expression doesn’t mention any variables and doesn’t
+            // contain any subexpressions so there is no work to do.
+        },
+        .logical => |logical| {
+            // Static analysis does no control flow or short-circuiting
+            try self.resolveExpr(logical.left);
+            try self.resolveExpr(logical.right);
+        },
+        .unary => |unary| {
+            try self.resolveExpr(unary.right);
+        },
+        .variable => |variable| {
+            const name = variable.lexeme;
+            if (self.getLastOrNullScopesPtr()) |scope_ptr| {
+                if (scope_ptr.get(name)) |is_declared| {
+                    if (!is_declared) {
+                        return handleResolveError(
+                            ResolveError.UndefinedVariable,
+                            variable,
+                            "Can't read local variable '{s}' in its own initializer.",
+                            .{name},
+                        );
+                    }
+                }
+            }
+            try self.resolveLocal(expr, variable);
+        },
     }
 }
 
-pub fn resolveExpression(allocator: Allocator, interpreter: *Interpreter, expr: Expr) Error!StringHashMap(usize) {
+pub fn resolveExpression(allocator: Allocator, interpreter: *Interpreter, expr: *Expr) Error!std.AutoHashMap(*Expr, usize) {
     const resolver: Resolver = try Resolver.init(allocator, interpreter);
     defer resolver.deinit();
-
     try resolver.resolveExpr(expr);
 
-    return resolver.locals;
+    return resolver.interpreter.locals;
 }
 
 // const ResolveError = error{
