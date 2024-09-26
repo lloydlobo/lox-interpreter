@@ -13,12 +13,13 @@ const Environment = @This();
 
 allocator: Allocator,
 enclosing: ?*Environment = null,
-scope_depth: usize,
 values: StringHashMap(Value),
+// values: std.AutoHashMap([]const u8, Value),
 
 pub const Closure = union(enum) {
     existing: *Environment,
     new: void,
+
     pub const Void = {};
 };
 
@@ -33,7 +34,6 @@ pub fn init(allocator: Allocator) Allocator.Error!*Environment {
     self.* = .{
         .allocator = allocator,
         .enclosing = null,
-        .scope_depth = 0,
         .values = StringHashMap(Value).init(allocator),
     };
 
@@ -46,12 +46,9 @@ pub fn deinit(self: *Environment) void {
 }
 
 pub fn initEnclosing(allocator: Allocator, enclosing: *Environment) Environment {
-    assert(enclosing.scope_depth >= 0); // expect non-negative scope depth
-
     return .{
         .allocator = allocator,
         .enclosing = enclosing,
-        .scope_depth = enclosing.scope_depth + 1,
         .values = StringHashMap(Value).init(allocator),
     };
 }
@@ -61,20 +58,29 @@ pub fn define(self: *Self, name: []const u8, value: Value) Error!void {
     try self.values.put(name, value);
 }
 
-pub fn ancestor(self: *const Environment, distance: usize) *Environment {
-    // FIXME: this seems a bit buggy...
-    var environment = Environment.init(self.allocator) catch |err| {
-        root.exit(.runtime_error, "{}", .{err});
-    };
-    defer self.allocator.destroy(environment);
-    environment = @constCast(self); // avoid mutating original environment
-
-    var i: usize = 0;
-    while (i < distance) : (i += 1) {
-        environment = environment.enclosing.?;
+/// FIXME: this seems a bit buggy...
+// pub fn ancestor(self: *Environment, distance: usize) *Environment {
+pub fn ancestor(self: *@This(), distance: i32) *Environment {
+    if (comptime false) {
+        var environment = Environment.init(self.allocator) catch |err| {
+            root.exit(.runtime_error, "{}", .{err});
+        };
+        defer self.allocator.destroy(environment);
+        environment = @constCast(self); // avoid mutating original environment
     }
 
-    return environment;
+    var environment: *Environment = self; // Maybe it's time to use self: as @This()
+
+    // Traverse up the chain for the specified depth:
+    // * The interpreter code trusts that the resolver did its job and resolved the variable correctly.
+    // * This implies a deep coupling between these two classes.
+    // * In the resolver, each line of code that touches a scope must have its exact match in the interpreter for modifying an environment.
+    var i: i32 = 0;
+    while (i < distance) : (i += 1) {
+        environment = environment.enclosing orelse unreachable;
+    }
+
+    return environment; // ancestor at specified depth (distance)
 }
 
 pub fn get(self: *const Self, name: Token) Error!Value {
@@ -89,20 +95,8 @@ pub fn get(self: *const Self, name: Token) Error!Value {
     return Error.variable_not_declared;
 }
 
-pub fn getAt(self: *Environment, distance: usize, name: Token) ?Value {
-    const env = self.ancestor(distance);
-
-    return env.values.get(name.lexeme);
-}
-
-pub fn assignAt(
-    self: *Environment,
-    distance: usize,
-    name: Token,
-    value: Value,
-) Allocator.Error!void {
-    const env = self.ancestor(distance);
-    try env.values.put(name.lexeme, value);
+pub fn getAt(self: *Environment, distance: i32, name: Token) Error!Value {
+    return try self.ancestor(distance).get(name);
 }
 
 pub fn assign(self: *Self, name: Token, value: Value) Error!void {
@@ -115,6 +109,10 @@ pub fn assign(self: *Self, name: Token, value: Value) Error!void {
     } else {
         return Error.variable_not_declared;
     }
+}
+
+pub fn assignAt(self: *Environment, distance: i32, name: Token, value: Value) Error!void {
+    try self.ancestor(distance).assign(name, value);
 }
 
 test "define and get" { // $ zig test src/environment.zig 2>&1 | head
@@ -196,6 +194,57 @@ test "some errors and undefined behavior" {
         new_value.str,
         (try env.get(tok1)).str,
     ));
+}
+
+test "ancestor" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const global = try Environment.init(allocator);
+    var local1 = Environment.initEnclosing(allocator, global);
+    var local2 = Environment.initEnclosing(allocator, &local1);
+
+    try testing.expectEqual(global, local2.ancestor(2));
+    try testing.expectEqual(&local1, local2.ancestor(1));
+    try testing.expectEqual(&local2, local2.ancestor(0));
+}
+
+test "getAt and assignAt" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const global = try Environment.init(allocator);
+    var local1 = Environment.initEnclosing(allocator, global);
+    var local2 = Environment.initEnclosing(allocator, &local1);
+
+    const name = "x";
+    const value: Value = .{ .str = "global" };
+    try global.define(name, value);
+
+    const local_value: Value = .{ .str = "local" };
+    try local1.define(name, local_value);
+
+    const tok: Token = .{
+        .type = .identifier,
+        .lexeme = name,
+        .literal = .{ .str = value.str },
+        .line = 1,
+    };
+
+    // Test `getAt`
+    try testing.expectEqualStrings(value.str, (try local2.getAt(2, tok)).str);
+    try testing.expectEqualStrings(local_value.str, (try local2.getAt(1, tok)).str);
+
+    // Test `assignAt`
+    const new_value: Value = .{ .str = "new global" };
+    try local2.assignAt(2, tok, new_value);
+    try testing.expectEqualStrings(new_value.str, (try local2.getAt(2, tok)).str);
+
+    const new_local_value: Value = .{ .str = "new local" };
+    try local2.assignAt(1, tok, new_local_value);
+    try testing.expectEqualStrings(new_local_value.str, (try local2.getAt(1, tok)).str);
 }
 
 // ancestor()
