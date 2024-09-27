@@ -3,17 +3,18 @@ print "file: test.lox";
 
 print "# Resolution Errors";
 
-// var a = "first";
-// a = "second";
-// print a;
 
-// fun foo_function() {
-//     fun bar_function() {
-//         print "in bar_function.. that is inside foo_function";
-//     }
-//     bar_function();
-// }
-// foo_function();
+fun global_function() {
+    print "in global_function";
+}
+global_function();
+
+var a = "first";
+// TODO: Add support for resolver to populate assigns in local/globals or defer
+// interpreter to use the environment for now
+// Also should this be an error or a feature?
+// a = "second";
+print a;
 
 {
     fun bar_function() {
@@ -23,6 +24,13 @@ print "# Resolution Errors";
 }
 
 
+fun foo_function() {
+    fun bar_function() {
+        print "in bar_function.. that is inside foo_function";
+    }
+    bar_function();
+}
+foo_function();
 
 
 // see `:h modeline`

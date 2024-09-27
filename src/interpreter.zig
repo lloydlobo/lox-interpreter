@@ -267,11 +267,14 @@ fn visitAssignExpr(self: *Self, assign: Expr.Assign) Error!Value {
     } else {
         if (self.locals.get(assign.value)) |distance| {
             _ = self.environment.assignAt(distance, assign.name, value) catch |err| {
+                Logger.warn(.{}, @src(), "Failed to assignAt: {any}", .{err}); // └─ IDENTIFIER hello null
+
                 undeclared_token = assign.name;
                 return err;
             };
         } else {
             self.globals.assign(assign.name, value) catch |err| {
+                Logger.warn(.{}, @src(), "Failed to assign: {any}", .{err}); // └─ IDENTIFIER hello null
                 undeclared_token = assign.name;
                 return err;
             };
@@ -310,6 +313,12 @@ fn visitVariableExpr(self: *Self, expr: *Expr) Error!Value {
 // So, if we don’t find a distance in the map, it must be global. In that case,
 // we look it up, dynamically, directly in the global environment.
 fn lookupVariable(self: *Self, name: Token, expr: *Expr) Error!Value {
+    // FIXME:
+    //      Where errors bubble up: In the interpreter, specifically in
+    //      lookupVariable, the error bubbles up when the global variable is not
+    //      found in locals. Since the resolver isn't responsible for resolving
+    //      globals, you need to ensure the interpreter properly looks up globals
+    //      without relying on local resolution.
     return blk: {
         const distance: i32 = self.locals.get(expr) orelse {
             Logger.warn(
@@ -318,10 +327,36 @@ fn lookupVariable(self: *Self, name: Token, expr: *Expr) Error!Value {
                 "Variable not found in locals. Now looking for '{s}' in globals.",
                 .{name.lexeme},
             );
-            break :blk try self.globals.get(name);
+            const global_value = self.globals.get(expr.variable) catch |err| outer_blk: {
+                Logger.warn(
+                    .{},
+                    @src(),
+                    "Failed to find variable value from globals.{s}[name: {s}]{s}[err: {any}]",
+                    .{ Logger.newline, name.lexeme, Logger.newline, err },
+                );
+                break :outer_blk self.environment.get(expr.variable) catch |e| inner_blk: {
+                    undeclared_token = expr.variable;
+                    Logger.err(
+                        .{},
+                        @src(),
+                        "Failed to find variable value in environment.{s}[name: {s}]{s}[err: {any}]",
+                        .{ Logger.newline, name.lexeme, Logger.newline, err },
+                    );
+                    break :inner_blk e;
+                };
+            };
+
+            Logger.info(
+                .{},
+                @src(),
+                "Got variable value from interpreters environment instead.{s}[value: {any}]",
+                .{ Logger.newline, global_value },
+            );
+
+            break :blk global_value;
         };
 
-        break :blk try self.environment.getAt(distance, name); // catch |err| blk: {
+        break :blk try self.environment.getAt(distance, expr.variable); // catch |err| blk: {
     };
 }
 
@@ -362,7 +397,6 @@ pub fn executeBlock(
     return switch (closure) {
         .existing => |existing| {
             self.environment = existing;
-
             for (body) |*statement| {
                 _ = try self.execute(statement, writer);
             }
@@ -370,7 +404,6 @@ pub fn executeBlock(
         .new => {
             var curr_env = Environment.initEnclosing(self.allocator, prev_env);
             self.environment = &curr_env;
-
             for (body) |*stmt| {
                 _ = try self.execute(stmt, writer);
             }
@@ -450,7 +483,14 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
 //
 // FIXME: The resolve() function is present, but it's not clear from this code
 // snippet how it's integrated into the overall interpretation process.
+// * You should ensure that self.globals.get() in lookupVariable() and
+//   self.globals.assign() in visitAssignExpr() are properly defined to handle
+//   global variable retrieval and assignment.
+// * The fallbacks and error handling are good, but ensure that if a variable
+//   is missing in both locals and globals, an appropriate runtime error is
+//   raised to catch the case where it's truly undeclared.
 pub fn resolve(self: *Self, expr: *Expr, depth: i32) Allocator.Error!void {
+    // Maybe this `locals` does not point to resolvers `locals`??
     try self.locals.put(expr, depth);
 }
 

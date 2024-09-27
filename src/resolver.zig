@@ -130,8 +130,10 @@ pub fn handleTokenError(err: Error, token: Token, comptime fmt: []const u8) Allo
     return switch (err) {
         error.variable_already_declared,
         error.invalid_return,
-        error.undefined_variable,
         => main.tokenError(token, fmt),
+        error.undefined_variable => {
+            Logger.warn(.{}, @src(), "Supressing error: {} for '{s}'.", .{ err, token });
+        }, // HACK: to avoid global errors for now
         inline else => |other| other,
     };
 }
@@ -218,15 +220,30 @@ fn define(self: *Resolver, name: Token) Error!void {
     try self.getLastOrNullScopeStackPtr().?.put(name.lexeme, is_resolved);
 }
 
+// TODO:
+//      In the resolver, allow unresolved variables to pass silently or log them
+//      when you're confident they should be global.
+//      The interpreter (via lookupVariable) will handle unresolved variables at
+//      runtime, first checking locals, then globals.
+//
+//      Adjustments to the resolver:
+//
+//      You can check for the presence of a variable in global scope during the
+//      resolve phase but do not enforce an error for unresolved globals.
+//      Ensure that during interpretation, only unresolved local variables cause an
+//      error.
 fn resolveLocal(self: *Resolver, expr: *Expr, name: Token) Error!void {
-    const __dbg_logger_scope = Logger.Scope{ .name = "resolveLocal", .parent = &loggerscope_beginScope };
+    const logscope = Logger.Scope{
+        .name = "resolveLocal",
+        .parent = &loggerscope_beginScope,
+    };
 
-    if (self.current_function != .none and self.current_function != .initializer) {
-        // but it should be >= 1? why has the scope popped before resolving? maybe
-        // it's global/block semantic misunderstanding
+    if (self.current_function.isFn()) {
+        // but it should be >= 1? why has the scope popped before resolving?
+        // maybe it's global/block semantic misunderstanding
         if (!(self.scopesSize() >= 1)) {
             Logger.err(
-                __dbg_logger_scope,
+                logscope,
                 @src(),
                 "Assertion failed!: `(self.scopesSize() >= 1)`{s}[expr: {any}]{s}[name: {any}]{s}[Actual: {d} > {d}]",
                 .{ Logger.newline, expr, Logger.newline, name, Logger.newline, self.scopesSize(), 0 },
@@ -234,22 +251,34 @@ fn resolveLocal(self: *Resolver, expr: *Expr, name: Token) Error!void {
         }
     }
 
-    // FIXME: curr_stack_index is -1 -_-
     const curr_stack_index = @as(i32, @intCast(self.scopesSize())) - 1;
+    Logger.info(
+        logscope,
+        @src(),
+        "[1] Finally going to resolve local variable.{s}[name: '{any}' at curr_stack_index: {d}]. ",
+        .{ Logger.newline, name, curr_stack_index },
+    );
 
     var i: i32 = curr_stack_index;
-
-    root.tracesrc(@src(), "[1] Finally going to resolve local variable '{any}' at curr_stack_index {d}. ", .{ name, curr_stack_index });
-
     while (i >= 0) : (i -= 1) {
-        root.tracesrc(@src(), "Finally resolving local variable '{any}' at stack {d}. ", .{ name, curr_stack_index });
+        Logger.info(
+            logscope,
+            @src(),
+            "[2] Finally resolving local variable.{s}[name: '{any}' at stack: {d} ]. ",
+            .{ Logger.newline, name, i },
+        );
 
         if (self.scopes.items[@intCast(i)].contains(name.lexeme)) {
             assert((curr_stack_index >= i) and (curr_stack_index - i >= 0));
-
-            root.tracesrc(@src(), "Does this work?: '{d}', '{d}'", .{ i, curr_stack_index });
+            Logger.info(
+                logscope,
+                @src(),
+                "Interpreter is going to resolve.{s}[lexeme: {s}]",
+                .{ Logger.newline, name.lexeme },
+            );
 
             try self.interpreter.resolve(@constCast(expr), curr_stack_index - i);
+            assert(self.interpreter.locals.contains(expr)); // sanity check
 
             return;
         }
@@ -309,6 +338,13 @@ pub fn resolveStatements(self: *Resolver, statements: []const Stmt) Allocator.Er
 pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
     switch (stmt.*) {
         .block => |statements| {
+            // // Example
+            // {
+            //     fun bar_function() {
+            //         print "in bar_function.. that is inside a block";
+            //     }
+            //     bar_function();
+            // }
             try self.beginScope();
             try self.resolveStatements(statements);
             self.endScope();

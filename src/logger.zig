@@ -15,6 +15,8 @@ pub fn log(
     comptime format: []const u8,
     args: anytype,
 ) void {
+    const with_vertical_padding = false;
+    const v_pad = if (with_vertical_padding) "\n" else "";
     const stderr = std.io.getStdErr().writer();
 
     // Buffer to capture the fully formatted scope (including parent scopes)
@@ -27,12 +29,12 @@ pub fn log(
 
     // Write the full log message
     stderr.print(
-        "\n" ++ // spacer
+        v_pad ++
             "{s}[{s}] {s}:{s}{s}:{d}{s}:{d}:{s} {s}{s}:{s}{s} " ++
             format ++
             color_reset ++
             "\n" ++
-            "\n", // spacer
+            v_pad,
         .{
             color_white,
             scope_buffer[0 .. scope_writer.context.getPos() catch unreachable],

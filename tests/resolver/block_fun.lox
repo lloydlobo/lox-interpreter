@@ -1,0 +1,14 @@
+print "file: block_fun.lox";
+
+{
+    fun bar_function() {
+        print "in bar_function.. that is inside a block";
+    }
+
+    bar_function();
+}
+
+// see `:h modeline`
+// vim: set commentstring=//\ %s :
+// vim: set filetype=c :
+// vim: set sts=4 sw=4 et :
