@@ -1,0 +1,32 @@
+print "file: static_scope.lox";
+
+print "# Static scope";
+var a = "outer";
+{
+    var a = "inner";
+    print a;
+}
+
+print "# Resolving variable declarations";
+print "@disabled complie time error";
+// We split binding into two steps, declaring then defining, 
+// in order to handle funny edge cases like this:
+//     var a = "outer";
+//     {
+//         var a = a;
+//     }
+// Make it an error to reference a variable in its initializer. Have the
+// interpreter fail either at compile time or runtime if an initializer
+// mentions the variable being initialized.
+
+
+//
+// FIN
+//
+
+// Either add in init.lua: `autocmd FileType lox setlocal commentstring=//\ %s`
+// or use vim modeline below:
+
+// vim: set commentstring=//\ %s :
+// vim: set filetype=c :
+// vim: set sts=4 sw=4 et
