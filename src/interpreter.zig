@@ -27,6 +27,7 @@ allocator: Allocator,
 globals: *Environment,
 environment: *Environment,
 locals: AutoHashMap(*Expr, i32),
+simplocals: std.StringHashMap(i32),
 
 /// Uses thread-local variables to communicate out-of-band error information.
 /// See also:
@@ -63,6 +64,7 @@ pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
         .environment = try Environment.init(allocator),
         .globals = try Environment.init(allocator),
         .locals = AutoHashMap(*Expr, i32).init(allocator),
+        .simplocals = std.StringHashMap(i32).init(allocator),
     };
 
     {
@@ -259,27 +261,27 @@ fn visitUnaryExpr(self: *Self, expr: Expr.Unary) Error!Value {
 fn visitAssignExpr(self: *Self, assign: Expr.Assign) Error!Value {
     const value = try self.evaluate(assign.value);
 
-    if (comptime main.g_is_stable_feature_flag) {
-        self.environment.assign(assign.name, value) catch |err| {
+    // if (comptime main.g_is_stable_feature_flag) {
+    //     self.environment.assign(assign.name, value) catch |err| {
+    //         undeclared_token = assign.name;
+    //         return err;
+    //     };
+    // } else {
+    if (self.locals.get(assign.value)) |distance| {
+        _ = self.environment.assignAt(distance, assign.name, value) catch |err| {
+            Logger.warn(.{}, @src(), "Failed to assignAt: {any}", .{err}); // └─ IDENTIFIER hello null
+
             undeclared_token = assign.name;
             return err;
         };
     } else {
-        if (self.locals.get(assign.value)) |distance| {
-            _ = self.environment.assignAt(distance, assign.name, value) catch |err| {
-                Logger.warn(.{}, @src(), "Failed to assignAt: {any}", .{err}); // └─ IDENTIFIER hello null
-
-                undeclared_token = assign.name;
-                return err;
-            };
-        } else {
-            self.globals.assign(assign.name, value) catch |err| {
-                Logger.warn(.{}, @src(), "Failed to assign: {any}", .{err}); // └─ IDENTIFIER hello null
-                undeclared_token = assign.name;
-                return err;
-            };
-        }
+        self.globals.assign(assign.name, value) catch |err| {
+            Logger.warn(.{}, @src(), "Failed to assign: {any}", .{err}); // └─ IDENTIFIER hello null
+            undeclared_token = assign.name;
+            return err;
+        };
     }
+    // }
 
     return value;
 }
@@ -289,70 +291,65 @@ fn visitVariableExpr(self: *Self, expr: *Expr) Error!Value {
         Logger.debug(.{}, @src(), "visitVariableExpr: {any}", .{variable}); // └─ IDENTIFIER hello null
     }
 
-    if (comptime main.g_is_stable_feature_flag) {
-        return self.environment.get(expr.variable) catch |err| blk: {
+    // if (comptime main.g_is_stable_feature_flag) {
+    //     return self.environment.get(expr.variable) catch |err| blk: {
+    //         undeclared_token = expr.variable;
+    //         break :blk err;
+    //     };
+    // } else {
+    // TODO:
+    // https://craftinginterpreters.com/resolving-and-binding.html#accessing-a-resolved-variable
+    return self.lookupVariable(expr.variable, expr) catch |err| blk: {
+        Logger.warn(.{}, @src(), "Failed to lookup variable.{s}[variable: {s}]{s}[err: {any}]", .{
+            Logger.newline,
+            expr.variable,
+            Logger.newline,
+            err,
+        });
+
+        break :blk self.environment.get(expr.variable) catch |e| inner_blk: {
+            Logger.warn(.{}, @src(), "Failed to get variable value from environment.{s}[variable: {s}]{s}[err: {any}]", .{
+                Logger.newline,
+                expr.variable,
+                Logger.newline,
+                e,
+            });
+
             undeclared_token = expr.variable;
-            break :blk err;
+            break :inner_blk e;
         };
-    } else {
-        // TODO:
-        // https://craftinginterpreters.com/resolving-and-binding.html#accessing-a-resolved-variable
-        return self.lookupVariable(expr.variable, expr) catch |err| blk: {
-            undeclared_token = expr.variable;
-            break :blk err;
-        };
-    }
+    };
+    // }
 }
 
-/// TODO: Throw a runtime error if the variable isn’t defined.
-//
 // lookupVariable()
 // There are a couple of things going on here. First, we look up the resolved
 // distance in the map. Remember that we resolved only local variables. Globals
 // are treated specially and don’t end up in the map (hence the name locals).
 // So, if we don’t find a distance in the map, it must be global. In that case,
 // we look it up, dynamically, directly in the global environment.
+//
+// FIXME:
+//      Where errors bubble up: In the interpreter, specifically in
+//      lookupVariable, the error bubbles up when the global variable is not
+//      found in locals. Since the resolver isn't responsible for resolving
+//      globals, you need to ensure the interpreter properly looks up globals
+//      without relying on local resolution.
 fn lookupVariable(self: *Self, name: Token, expr: *Expr) Error!Value {
-    // FIXME:
-    //      Where errors bubble up: In the interpreter, specifically in
-    //      lookupVariable, the error bubbles up when the global variable is not
-    //      found in locals. Since the resolver isn't responsible for resolving
-    //      globals, you need to ensure the interpreter properly looks up globals
-    //      without relying on local resolution.
     return blk: {
         const distance: i32 = self.locals.get(expr) orelse {
-            Logger.warn(
-                .{},
-                @src(),
-                "Variable not found in locals. Now looking for '{s}' in globals.",
-                .{name.lexeme},
-            );
+            Logger.warn(.{}, @src(), "Variable not found in locals. Now looking for '{s}' in globals.", .{
+                name.lexeme,
+            });
             const global_value = self.globals.get(expr.variable) catch |err| outer_blk: {
-                Logger.warn(
-                    .{},
-                    @src(),
-                    "Failed to find variable value from globals.{s}[name: {s}]{s}[err: {any}]",
-                    .{ Logger.newline, name.lexeme, Logger.newline, err },
-                );
+                Logger.warn(.{}, @src(), "Failed to find variable value from globals.{s}[name: {s}]{s}[err: {any}]", .{ Logger.newline, name.lexeme, Logger.newline, err });
                 break :outer_blk self.environment.get(expr.variable) catch |e| inner_blk: {
                     undeclared_token = expr.variable;
-                    Logger.err(
-                        .{},
-                        @src(),
-                        "Failed to find variable value in environment.{s}[name: {s}]{s}[err: {any}]",
-                        .{ Logger.newline, name.lexeme, Logger.newline, err },
-                    );
+                    Logger.err(.{}, @src(), "Failed to find variable value in environment.{s}[name: {s}]{s}[err: {any}]", .{ Logger.newline, name.lexeme, Logger.newline, err });
                     break :inner_blk e;
                 };
             };
-
-            Logger.info(
-                .{},
-                @src(),
-                "Got variable value from interpreters environment instead.{s}[value: {any}]",
-                .{ Logger.newline, global_value },
-            );
-
+            Logger.info(.{}, @src(), "Got variable value from interpreters environment instead.{s}[value: {any}]", .{ Logger.newline, global_value });
             break :blk global_value;
         };
 
