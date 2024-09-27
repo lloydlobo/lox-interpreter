@@ -2,13 +2,14 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const AstPrinter = @import("astprinter.zig").AstPrinter;
-const debug = @import("debug.zig");
 const Interpreter = @import("interpreter.zig");
+const Logger = @import("logger.zig");
 const Parser = @import("parser.zig");
 const Resolver = @import("resolver.zig");
-const root = @import("root.zig");
 const Scanner = @import("scanner.zig").Scanner;
 const Token = @import("token.zig");
+const debug = @import("debug.zig");
+const root = @import("root.zig");
 
 // # NOTES
 //
@@ -142,7 +143,11 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
                 if (comptime debug.is_trace_interpreter) {
                     var it = (try interpreter.locals.clone()).iterator();
                     while (it.next()) |entry| {
-                        root.tracesrc(@src(), "depth:'{any}','{}'", .{ entry.value_ptr.*, entry.key_ptr.* });
+                        Logger.info(.{}, @src(), "Locals Key Value Pair{s}Depth: {any}{any}", .{
+                            Logger.newline,
+                            entry.value_ptr.*,
+                            entry.key_ptr.*,
+                        });
                     }
                 }
             }
@@ -152,12 +157,18 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
     }
 
     if (comptime debug.is_trace_interpreter) {
-        root.tracesrc(@src(), "Encountered '{0d}' '{1s}' and '{2d}' '{3s}'.", .{
-            g_runtime_error_count,
-            root.ErrorCode.runtime_error.toString(),
-            g_error_count,
-            root.ErrorCode.syntax_error.toString(),
-        });
+        const total_errors = g_runtime_error_count + g_error_count;
+        if (total_errors != 0) {
+            Logger.err(.{}, @src(), "Found {d} error(s).{s}{s}: {d}{s}{s}: {d}", .{
+                total_errors,
+                Logger.newline,
+                root.ErrorCode.runtime_error.toString(),
+                g_runtime_error_count,
+                Logger.newline,
+                root.ErrorCode.syntax_error.toString(),
+                g_error_count,
+            });
+        }
     }
 
     var res = root.ErrorCode.exit_success;
@@ -174,6 +185,7 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
 pub fn main() !void {
     const args = try std.process.argsAlloc(std.heap.page_allocator);
     defer std.process.argsFree(std.heap.page_allocator, args);
+    Logger.debug(.{}, @src(), "Process args: {s} {s}", .{ Logger.newline, args });
 
     if (args.len < 3) {
         std.debug.print("Usage: ./your_program.sh tokenize <filename>\n", .{});
@@ -185,7 +197,7 @@ pub fn main() !void {
 
     if (Command.fromString(command)) |cmd| {
         if (comptime debug.is_testing) {
-            root.tracesrc(@src(), "Command: {}", .{cmd});
+            Logger.info(.{}, @src(), "Command: {}", .{cmd});
         }
     } else {
         std.debug.print("Unknown command: {s}\n", .{command});

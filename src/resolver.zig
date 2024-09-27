@@ -10,12 +10,13 @@ const testing = std.testing;
 
 const Expr = @import("expr.zig").Expr;
 const Interpreter = @import("interpreter.zig");
+const Logger = @import("logger.zig");
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
 const Value = @import("expr.zig").Expr.Value;
+const debug = @import("debug.zig");
 const main = @import("main.zig");
 const root = @import("root.zig");
-const debug = @import("debug.zig");
 
 /// Keys, as in Environment, are variable names.
 /// The values are Booleans, for a reason I’ll explain soon.
@@ -29,6 +30,8 @@ allocator: Allocator,
 interpreter: *Interpreter,
 scopes: ScopeStack,
 current_function: FunctionType = FunctionType.none,
+
+const loggerscope_beginScope = Logger.Scope{ .name = "beginScope", .parent = null };
 
 const ResolveError = error{
     // invalid_super,
@@ -45,6 +48,10 @@ const FunctionType = enum {
     function,
     initializer,
     method,
+
+    pub fn isFn(self: FunctionType) bool {
+        return self != .none and self != .initializer;
+    }
 };
 
 const ClassType = enum {
@@ -95,29 +102,26 @@ fn beginScope(self: *Resolver) Allocator.Error!void {
     }
 
     const scope = BlockScope.init(self.allocator);
-
     if (comptime debug.is_trace_resolver) {
-        root.tracesrc(@src(), "Going to append this scope to scopes of size: {d}\n", .{prev_size});
+        Logger.info(loggerscope_beginScope, @src(), "Pushing scope.{s}[prev_size: {d}]", .{ Logger.newline, prev_size });
     }
 
     try self.scopes.append(scope);
 
     if (comptime debug.is_trace_resolver) {
+        const __dbg_logger_scope_1: Logger.Scope = .{ .name = "(after scopes.append)", .parent = &loggerscope_beginScope };
+
         const curr_size = self.scopes.items.len;
-        root.tracesrc(@src(), "after append size of scopes is {d}\n", .{curr_size});
+        Logger.debug(__dbg_logger_scope_1, @src(), "After append size of scopes is {d}", .{curr_size});
+
         assert(curr_size > prev_size);
+
         for (self.scopes.items) |*item| {
-            // root.tracesrc(@src(), "keyval item: {any}\n", .{item});
-            var key_it = item.keyIterator();
-            root.tracesrc(@src(), "key_it.items: {any}\n", .{key_it.items}); // key_it.items: []const u8@0
-            while (key_it.next()) |key| {
-                root.tracesrc(@src(), "key: {any}\n", .{key});
-            }
-            var value_it = item.valueIterator();
-            root.tracesrc(@src(), "value_it.items: {any}\n", .{value_it.items}); // value_it.items: bool@0
-            while (value_it.next()) |value| {
-                root.tracesrc(@src(), "value: {any}\n", .{value});
-            }
+            const key_it = item.keyIterator();
+            Logger.debug(__dbg_logger_scope_1, @src(), "key_it.items{s}{any}", .{ Logger.newline, key_it.items }); //> []const u8@0
+
+            const value_it = item.valueIterator();
+            Logger.debug(__dbg_logger_scope_1, @src(), "value_it.items{s}{any}", .{ Logger.newline, value_it.items }); //> bool@0
         }
     }
 }
@@ -132,44 +136,74 @@ pub fn handleTokenError(err: Error, token: Token, comptime fmt: []const u8) Allo
     };
 }
 
+// The scope stack is only used for local block scopes. Variables declared at
+// the top level in the global scope are not tracked by the resolver since they
+// are more dynamic in Lox. When resolving a variable, if we can’t find it in
+// the stack of local scopes, we assume it must be global.
 fn endScope(self: *Resolver) void {
-    var scope: BlockScope = self.scopes.pop();
-    defer scope.deinit();
+    const logscope: Logger.Scope = .{ .name = @src().fn_name, .parent = &loggerscope_beginScope };
 
-    var it = scope.iterator();
-    while (it.next()) |entry| {
-        const is_used: bool = entry.value_ptr.*;
-        const name: []const u8 = entry.key_ptr.*;
+    // scopes are stored in an explicit stack
+    // Invalidates element pointers to the removed element.
+    const scope: BlockScope = self.scopes.pop();
 
-        const is_not_used = (!is_used and
-            !mem.startsWith(u8, name, "_") and
-            !mem.eql(u8, name, "this") and
-            !mem.eql(u8, name, "super"));
-        if (is_not_used) {
-            root.eprint(
-                "Warning: Unused local variable '{s}'. Start variable name with underscore if variable is unused.\n",
-                .{name},
-            );
-        }
-    }
+    Logger.info(logscope, @src(), "Finally popped scope{s}[Metadata: {any}]{s}[Scopes count: {any}]", .{ Logger.newline, scope.unmanaged.metadata, Logger.newline, scope.unmanaged.count() });
+
+    // var it = scope.iterator();
+    // while (it.next()) |entry| {
+    //     const is_used: bool = entry.value_ptr.*;
+    //     const name: []const u8 = entry.key_ptr.*;
+    //     const is_not_used = (!is_used and
+    //         !mem.startsWith(u8, name, "_") and
+    //         !mem.eql(u8, name, "this") and
+    //         !mem.eql(u8, name, "super"));
+    //     if (is_not_used) {
+    //         root.eprint(
+    //             "Warning: Unused local variable '{s}'. Start variable name with underscore if variable is unused.\n",
+    //             .{name},
+    //         );
+    //     }
+    // }
 }
 
 // When we declare a variable in a local scope, we already know the names
 // of every variable previously declared in that same scope. If we see a
 // collision, we report an error.
-fn declare(self: *Resolver, name: Token) Error!void {
-    if (self.isEmptyScopeStack()) return root.tracesrc(@src(), "Did you make sure Resolver.init() filled in scopes?  Found empty stack: {any}", .{name});
+fn declare(self: *Resolver, name: Token) Allocator.Error!void {
+    const loggerscope_declare: Logger.Scope = .{
+        .name = @src().fn_name,
+        .parent = if (self.current_function.isFn()) &loggerscope_beginScope else null,
+    };
 
-    const scope: *BlockScope = self.getLastOrNullScopeStackPtr() orelse unreachable; // expect scope to not be empty.
-
-    // if (scope.contains(name.lexeme)) try handleTokenError(
-    //     Error.variable_already_declared,
-    //     name,
-    //     "Already a variable with this name in this scope.",
-    // );
+    // FIXME: How should we declare a function variable name if it is global.
+    // since, we return immediately?
+    if (self.isEmptyScopeStack()) {
+        Logger.warn(
+            loggerscope_declare,
+            @src(),
+            "Did not call beginScope(). Not a function type. Found empty stack.{s}[name: {any}]",
+            .{ Logger.newline, name },
+        );
+        return;
+    }
+    if (self.scopes.items[self.scopesSize() - 1].contains(name.lexeme)) {
+        Logger.err(
+            loggerscope_declare,
+            @src(),
+            "Already a variable with this name in this scope.{s}[name: {any} ]{s}[peeked scope item count: {d}]",
+            .{ Logger.newline, name, Logger.newline, self.scopes.items[self.scopesSize() - 1].count() },
+        );
+        try handleTokenError(
+            Error.variable_already_declared,
+            name,
+            "Already a variable with this name in this scope.",
+        );
+    }
 
     const is_resolved = false;
-    try scope.put(name.lexeme, is_resolved);
+    Logger.info(loggerscope_declare, @src(), "Declaring token...{s}[name: {any} ]{s}[peeked scope item count: {d}]", .{ Logger.newline, name, Logger.newline, self.scopes.items[self.scopesSize() - 1].count() });
+    try self.scopes.items[self.scopesSize() - 1].put(name.lexeme, is_resolved);
+    Logger.info(loggerscope_declare, @src(), "Token declared. {s}[peeked scope item count: {d}]", .{ Logger.newline, self.scopes.items[self.scopesSize() - 1].count() });
 }
 
 // After (`declare()`) declaring the variable, we resolve its initializer
@@ -185,14 +219,38 @@ fn define(self: *Resolver, name: Token) Error!void {
 }
 
 fn resolveLocal(self: *Resolver, expr: *Expr, name: Token) Error!void {
+    const __dbg_logger_scope = Logger.Scope{ .name = "resolveLocal", .parent = &loggerscope_beginScope };
+
+    if (self.current_function != .none and self.current_function != .initializer) {
+        // but it should be >= 1? why has the scope popped before resolving? maybe
+        // it's global/block semantic misunderstanding
+        if (!(self.scopesSize() >= 1)) {
+            Logger.err(
+                __dbg_logger_scope,
+                @src(),
+                "Assertion failed!: `(self.scopesSize() >= 1)`{s}[expr: {any}]{s}[name: {any}]{s}[Actual: {d} > {d}]",
+                .{ Logger.newline, expr, Logger.newline, name, Logger.newline, self.scopesSize(), 0 },
+            );
+        }
+    }
+
+    // FIXME: curr_stack_index is -1 -_-
     const curr_stack_index = @as(i32, @intCast(self.scopesSize())) - 1;
 
     var i: i32 = curr_stack_index;
+
+    root.tracesrc(@src(), "[1] Finally going to resolve local variable '{any}' at curr_stack_index {d}. ", .{ name, curr_stack_index });
+
     while (i >= 0) : (i -= 1) {
+        root.tracesrc(@src(), "Finally resolving local variable '{any}' at stack {d}. ", .{ name, curr_stack_index });
+
         if (self.scopes.items[@intCast(i)].contains(name.lexeme)) {
             assert((curr_stack_index >= i) and (curr_stack_index - i >= 0));
+
             root.tracesrc(@src(), "Does this work?: '{d}', '{d}'", .{ i, curr_stack_index });
+
             try self.interpreter.resolve(@constCast(expr), curr_stack_index - i);
+
             return;
         }
     }
@@ -200,27 +258,49 @@ fn resolveLocal(self: *Resolver, expr: *Expr, name: Token) Error!void {
 
 // TODO: https://craftinginterpreters.com/resolving-and-binding.html#invalid-return-errors
 fn resolveFunction(self: *Resolver, function: *const Stmt.Function, @"type": FunctionType) Error!void {
-    const enclosing_function = self.current_function;
+    const logscope = Logger.Scope{
+        .name = @src().fn_name,
+        .parent = &loggerscope_beginScope,
+    };
 
+    const enclosing_function = self.current_function;
     self.current_function = @"type";
-    defer self.current_function = enclosing_function;
+    const prev_size = self.scopesSize();
 
     try self.beginScope();
-
+    assert(prev_size < self.scopesSize());
     for (function.parameters) |parameter| {
         try self.declare(parameter);
         try self.define(parameter);
     }
     try self.resolveStatements(function.body);
-
     self.endScope();
+
+    if (!(self.scopesSize() >= prev_size)) {
+        Logger.err(
+            logscope,
+            @src(),
+            "Assertion failed!: `self.scopesSize() > prev_size`{s}[function: {any}]{s}[type: {any}]{s}[Actual: {d} > {d}]",
+            .{
+                Logger.newline,
+                function,
+                Logger.newline,
+                @"type",
+                Logger.newline,
+                self.scopesSize(),
+                prev_size,
+            },
+        );
+    }
+
+    self.current_function = enclosing_function;
 }
 
 pub fn resolveStatements(self: *Resolver, statements: []const Stmt) Allocator.Error!void {
     for (statements) |*stmt| {
         resolveStatement(self, stmt) catch |err| {
             const token_ptr = root.unionPayloadPtr(Token, stmt) orelse unreachable;
-            root.tracesrc(@src(), "Found payload ptr: {any}: {any}", .{ stmt, token_ptr });
+            root.tracesrcLog(.err, @src(), "Found payload ptr: {any}: {any}", .{ stmt, token_ptr });
             return handleTokenError(err, token_ptr.*, "Failed to resolve statement.");
         };
     }
@@ -240,6 +320,12 @@ pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
             try self.resolveExpr(expr_stmt);
         },
         .function => |function| {
+            Logger.info(
+                .{ .name = @src().fn_name },
+                @src(),
+                "Found function initializer: '{any}'.",
+                .{function},
+            );
             try self.declare(function.name);
             try self.define(function.name);
             try self.resolveFunction(&function, FunctionType.function);
@@ -268,6 +354,7 @@ pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
             // innermost scope’s map.
             try self.declare(var_stmt.name);
             if (var_stmt.initializer) |expr| {
+                root.tracesrc(@src(), "Found variable initializer: '{any}'.", .{expr});
                 try self.resolveExpr(expr);
             }
             try self.define(var_stmt.name);
@@ -280,6 +367,17 @@ pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
 }
 
 pub fn resolveExpr(self: *Resolver, expr: *Expr) Error!void {
+    // FIXME:
+    //
+    //
+    //
+    //
+    //
+    //
+    // [declare] src/resolver.zig:declare:183:13: warn: Did not call beginScope(). Not a function type. Found empty stack.
+    // └─ [name: IDENTIFIER function null]
+    //
+    //
     switch (expr.*) {
         .assign => |assign| {
             try self.resolveExpr(assign.value);
@@ -324,7 +422,16 @@ pub fn resolveExpr(self: *Resolver, expr: *Expr) Error!void {
                     }
                 }
             }
-
+            Logger.info(
+                loggerscope_beginScope,
+                @src(),
+                "Resolving variable initializer expression: '{any}'.",
+                .{variable},
+            );
+            {
+                // TODO: check if variable └─ visitVariableExpr: IDENTIFIER oops
+                // null is `declare()`
+            }
             try self.resolveLocal(expr, variable);
         },
     }

@@ -1,11 +1,31 @@
-fun oops() {
-    var a = "first";
-    var a = "second";
-    // print a;
+print "file: test.lox";
+
+
+print "# Resolution Errors";
+
+// var a = "first";
+// a = "second";
+// print a;
+
+// fun foo_function() {
+//     fun bar_function() {
+//         print "in bar_function.. that is inside foo_function";
+//     }
+//     bar_function();
+// }
+// foo_function();
+
+{
+    fun bar_function() {
+        print "in bar_function.. that is inside a block";
+    }
+    bar_function();
 }
 
-// oops();
 
+
+
+// see `:h modeline`
 // vim: set commentstring=//\ %s :
 // vim: set filetype=c :
 // vim: set sts=4 sw=4 et :

@@ -8,6 +8,7 @@ const Environment = @import("environment.zig");
 const ErrorCode = @import("main.zig").ErrorCode;
 const Expr = @import("expr.zig").Expr;
 const FunctionContext = @import("loxfunction.zig");
+const Logger = @import("logger.zig");
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
 const Value = @import("expr.zig").Expr.Value;
@@ -83,7 +84,7 @@ pub fn handleRuntimeError(err: Error) Allocator.Error!void {
         error.wrong_arity => runtimeError(undeclared_token, "Wrong function arguments arity '{s}'.", .{undeclared_token.lexeme}),
         error.not_calable => runtimeError(undeclared_token, "Value not callable '{s}'.", .{undeclared_token.lexeme}),
         error.io_error => root.exit(.exit_failure, "Encountered i/o error at runtime.", .{}),
-        error.Return => root.tracesrc(@src(), "Trick to propagate return values with errors '{any}' {any}.", .{ runtime_token, runtime_return_value }),
+        error.Return => Logger.err(.{}, @src(), "Trick to propagate return values with errors '{any}' {any}.", .{ runtime_token, runtime_return_value }),
         else => |other| other,
     };
 }
@@ -282,7 +283,7 @@ fn visitAssignExpr(self: *Self, assign: Expr.Assign) Error!Value {
 
 fn visitVariableExpr(self: *Self, expr: *Expr) Error!Value {
     if (root.unionPayloadPtr(Token, expr)) |variable| {
-        root.tracesrc(@src(), "visitVariableExpr: {any}", .{variable}); // └─ IDENTIFIER hello null
+        Logger.debug(.{}, @src(), "visitVariableExpr: {any}", .{variable}); // └─ IDENTIFIER hello null
     }
 
     if (comptime main.g_is_stable_feature_flag) {
@@ -311,7 +312,12 @@ fn visitVariableExpr(self: *Self, expr: *Expr) Error!Value {
 fn lookupVariable(self: *Self, name: Token, expr: *Expr) Error!Value {
     return blk: {
         const distance: i32 = self.locals.get(expr) orelse {
-            root.tracesrc(@src(), "Variable not found in locals. Now looking for '{s}' in globals.", .{name.lexeme});
+            Logger.warn(
+                .{},
+                @src(),
+                "Variable not found in locals. Now looking for '{s}' in globals.",
+                .{name.lexeme},
+            );
             break :blk try self.globals.get(name);
         };
 
@@ -487,7 +493,7 @@ pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!vo
     }
     if (comptime debug.is_trace_interpreter) {
         for (try outputs.toOwnedSlice()) |value| {
-            root.tracesrc(@src(), "output: '{any}'", .{value});
+            Logger.debug(.{}, @src(), "output: '{any}'", .{value});
         }
     }
 }

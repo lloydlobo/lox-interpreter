@@ -73,6 +73,34 @@ const debug_trace_flags: [8]bool = .{
     debug.is_trace_virtual_machine,
 };
 
+pub fn tracesrcLog(
+    comptime message_level: std.log.Level,
+    comptime src: std.builtin.SourceLocation,
+    comptime fmt: []const u8,
+    args: anytype,
+) void {
+    const src_fmt = "{s}{s}:{s}{s}:{d}{s}{s}:{d}{s}";
+
+    const src_args = .{ COLOR_WHITE, src.file, COLOR_BOLD, src.fn_name, src.line, COLOR_RESET, COLOR_WHITE, src.column, COLOR_RESET };
+    const message_color = switch (message_level) {
+        .err => COLOR_RED,
+        .warn => COLOR_YELLOW,
+        .debug => COLOR_CYAN,
+        .info => COLOR_GREEN,
+    };
+    const args_fmt = "\n" ++
+        COLOR_YELLOW ++ "└─ " ++ message_color ++ fmt ++ COLOR_RESET;
+
+    var buffer: [1 << 11]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    const writer = stream.writer();
+    std.fmt.format(writer, src_fmt, src_args) catch |err| exit(.exit_failure, "{}", .{err});
+    std.fmt.format(writer, args_fmt, args) catch |err| exit(.exit_failure, "{}", .{err});
+
+    const pos = writer.context.*.getPos() catch |err| exit(.exit_failure, "{}", .{err});
+    std.log.defaultLog(message_level, std.log.default_log_scope, "{s}", .{buffer[0..pos]});
+}
+
 /// NOTE: Manually change std.log.debug to std.log.warn to log in tests.
 /// NOTE: `@src() std.builtin.SourceLocation` ─ Must be called in a function.
 pub fn tracesrc(comptime src: anytype, comptime fmt: []const u8, args: anytype) void {

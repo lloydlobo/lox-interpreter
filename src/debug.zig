@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub const is_stress_gc = false;
-pub const is_testing = false;
+pub const is_testing = true;
 pub const is_trace_compiler = false; // interpreter for VM
 pub const is_trace_environment = false;
 pub const is_trace_garbage_collector = false;
