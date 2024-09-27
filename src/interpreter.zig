@@ -4,16 +4,15 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 const AutoHashMap = std.AutoHashMap; // const StringHashMap = std.StringHashMap;
 
-const debug = @import("debug.zig");
 const Environment = @import("environment.zig");
 const ErrorCode = @import("main.zig").ErrorCode;
 const Expr = @import("expr.zig").Expr;
-const Value = Expr.Value;
-const LoxCallable = Value.LoxCallable;
-const LoxFunction = Value.LoxFunction;
-const makeLoxFunction = @import("loxfunction.zig").makeLoxFunction;
+const FunctionContext = @import("loxfunction.zig");
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
+const Value = @import("expr.zig").Expr.Value;
+const debug = @import("debug.zig");
+const main = @import("main.zig");
 const root = @import("root.zig");
 const runtimeError = @import("main.zig").runtimeError;
 
@@ -26,17 +25,17 @@ const Interpreter = @This(); // File struct
 allocator: Allocator,
 globals: *Environment,
 environment: *Environment,
-locals: AutoHashMap(*Expr, usize),
+locals: AutoHashMap(*Expr, i32),
 
 /// Uses thread-local variables to communicate out-of-band error information.
 /// See also:
 ///   - https://www.reddit.com/r/Zig/comments/wqnd04/my_reasoning_for_why_zig_errors_shouldnt_have_a/
 ///   - https://github.com/ziglang/zig/issues/2647
+/// Key doesn't already exist in environments's variable map.
+pub var undeclared_token: Token = undefined;
 pub var runtime_error: Error = undefined;
 pub var runtime_return_value: Value = undefined;
 pub var runtime_token: Token = undefined;
-/// Key doesn't already exist in environments's variable map.
-pub var undeclared_token: Token = undefined;
 
 const Self = @This();
 
@@ -49,21 +48,24 @@ const RuntimeError = error{
     not_calable,
 };
 
-/// These are not actual errors, but a way to propagate stuff like return values.
+/// Not actual errors, but a way to propagate return values.
 const PropagationException = error{Return};
 
-pub const Error = RuntimeError || PropagationException || Environment.Error || Allocator.Error;
+pub const Error = RuntimeError ||
+    PropagationException ||
+    Environment.Error ||
+    Allocator.Error;
 
 pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
     var self: Interpreter = .{
         .allocator = allocator,
         .environment = try Environment.init(allocator),
         .globals = try Environment.init(allocator),
-        .locals = AutoHashMap(*Expr, usize).init(allocator),
+        .locals = AutoHashMap(*Expr, i32).init(allocator),
     };
 
     {
-        const clock_callable = try self.allocator.create(LoxCallable);
+        const clock_callable = try self.allocator.create(Value.LoxCallable);
         clock_callable.* = clockGlobalCallable;
         self.globals.define("clock", .{ .callable = clock_callable }) catch |err|
             try handleRuntimeError(err);
@@ -153,33 +155,6 @@ fn printValue(writer: anytype, value: Value) void {
 // Visitor methods
 //
 
-/// Assignment references variables.
-fn visitAssignExpr(self: *Self, assign: Expr.Assign) Error!Value {
-    const value = try self.evaluate(assign.value);
-
-    const __is_stable = false;
-    if (comptime __is_stable) {
-        self.environment.assign(assign.name, value) catch |err| {
-            undeclared_token = assign.name;
-            return err;
-        };
-    } else {
-        if (self.locals.get(assign.value)) |distance| {
-            _ = self.environment.assignAt(distance, assign.name, value) catch |err| {
-                undeclared_token = assign.name;
-                return err;
-            };
-        } else {
-            self.globals.assign(assign.name, value) catch |err| {
-                undeclared_token = assign.name;
-                return err;
-            };
-        }
-    }
-
-    return value;
-}
-
 fn visitBinaryExpr(self: *Self, expr: Expr.Binary) Error!Value {
     const l = try self.evaluate(expr.left);
     const r = try self.evaluate(expr.right);
@@ -224,14 +199,14 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
     assert((arguments.items.len == args_count) and (arguments.capacity == args_count));
 
     return switch (callee) {
-        .callable => |callable| blk: { // `LoxCallable` (native)
+        .callable => |callable| blk: { // `Value.LoxCallable` (native)
             if (callable.arity() != args_count) {
                 runtime_token = call.paren;
                 break :blk error.wrong_arity;
             }
             break :blk callable.callFn(self, try arguments.toOwnedSlice());
         },
-        .function => |function| blk: { // `LoxFunction`
+        .function => |function| blk: { // `Value.LoxFunction`
             if (function.arity() != args_count) {
                 runtime_token = call.paren;
                 break :blk error.wrong_arity;
@@ -279,54 +254,75 @@ fn visitUnaryExpr(self: *Self, expr: Expr.Unary) Error!Value {
     };
 }
 
+/// Assignment references variables.
+fn visitAssignExpr(self: *Self, assign: Expr.Assign) Error!Value {
+    const value = try self.evaluate(assign.value);
+
+    if (comptime main.g_is_stable_feature_flag) {
+        self.environment.assign(assign.name, value) catch |err| {
+            undeclared_token = assign.name;
+            return err;
+        };
+    } else {
+        if (self.locals.get(assign.value)) |distance| {
+            _ = self.environment.assignAt(distance, assign.name, value) catch |err| {
+                undeclared_token = assign.name;
+                return err;
+            };
+        } else {
+            self.globals.assign(assign.name, value) catch |err| {
+                undeclared_token = assign.name;
+                return err;
+            };
+        }
+    }
+
+    return value;
+}
+
 fn visitVariableExpr(self: *Self, expr: *Expr) Error!Value {
-    // if (root.unionPayloadPtr(Token, expr)) |variable| {
-    //     root.tracesrc(@src(), "{any}", .{variable}); // └─ IDENTIFIER hello null
-    // }
-    const __is_stable = false;
-    if (comptime __is_stable) {
+    if (root.unionPayloadPtr(Token, expr)) |variable| {
+        root.tracesrc(@src(), "visitVariableExpr: {any}", .{variable}); // └─ IDENTIFIER hello null
+    }
+
+    if (comptime main.g_is_stable_feature_flag) {
         return self.environment.get(expr.variable) catch |err| blk: {
             undeclared_token = expr.variable;
             break :blk err;
         };
     } else {
-        return self.lookupVariable(expr.variable, expr) orelse {
-            if (__is_stable) {
-                return self.environment.get(expr.variable) catch |err| blk: {
-                    undeclared_token = expr.variable;
-                    break :blk err;
-                };
-            } else return error.variable_not_declared;
+        // TODO:
+        // https://craftinginterpreters.com/resolving-and-binding.html#accessing-a-resolved-variable
+        return self.lookupVariable(expr.variable, expr) catch |err| blk: {
+            undeclared_token = expr.variable;
+            break :blk err;
         };
     }
 }
 
-fn lookupVariable(self: *Self, name: Token, expr: *Expr) ?Value {
-    // There are a couple of things going on here. First, we look up the resolved
-    // distance in the map. Remember that we resolved only local variables. Globals
-    // are treated specially and don’t end up in the map (hence the name locals).
-    // So, if we don’t find a distance in the map, it must be global. In that case,
-    // we look it up, dynamically, directly in the global environment. That throws
-    // a runtime error if the variable isn’t defined.
-    if (self.locals.get(expr)) |distance| {
-        // root.tracesrc(@src(), "variable found: '{any}'", .{name});
-        return self.environment.getAt(distance, name);
-    } else {
-        // root.tracesrc(@src(), "variable not found: '{any}'", .{name});
-        return self.globals.get(name) catch null;
-    }
+/// TODO: Throw a runtime error if the variable isn’t defined.
+//
+// lookupVariable()
+// There are a couple of things going on here. First, we look up the resolved
+// distance in the map. Remember that we resolved only local variables. Globals
+// are treated specially and don’t end up in the map (hence the name locals).
+// So, if we don’t find a distance in the map, it must be global. In that case,
+// we look it up, dynamically, directly in the global environment.
+fn lookupVariable(self: *Self, name: Token, expr: *Expr) Error!Value {
+    return blk: {
+        const distance: i32 = self.locals.get(expr) orelse {
+            root.tracesrc(@src(), "Variable not found in locals. Now looking for '{s}' in globals.", .{name.lexeme});
+            break :blk try self.globals.get(name);
+        };
+
+        break :blk try self.environment.getAt(distance, name); // catch |err| blk: {
+    };
 }
 
-/// Visit methods do a **post-order traversal**—each node evaluates its
-/// children before doing its own work.
+// evaluate()
+// Visit methods do a **post-order traversal**—each node evaluates its
+// children before doing its own work.
 fn evaluate(self: *Self, expr: *Expr) Error!Value {
-    // if (self.locals.get(expr)) |distance| {
-    //     root.tracesrc(@src(), "resolve expr: '{any}', distance: '{any}'", .{ expr, distance });
-    //     try self.resolve(expr, distance);
-    // } else {
-    //     root.tracesrc(@src(), "failed to resolve expr in locals: '{any}'", .{expr});
-    // }
-    //
     const result = switch (expr.*) {
         .assign => |assign| try self.visitAssignExpr(assign),
         .binary => |binary| try self.visitBinaryExpr(binary),
@@ -341,23 +337,39 @@ fn evaluate(self: *Self, expr: *Expr) Error!Value {
     return result;
 }
 
-/// Internally discards the block-local environment and restores the previous
-/// one that was active back at the callsite.
+// executeBlock()
+// Internally discards the block-local environment and restores the previous
+// one that was active back at the callsite.
+//
 // See https://craftinginterpreters.com/functions.html#function-objects
-pub fn executeBlock(self: *Self, body: []Stmt, closure: Environment.Closure, writer: anytype) Error!void {
+//
+/// FIXME: Should closure be a pointer?
+pub fn executeBlock(
+    self: *Self,
+    body: []Stmt,
+    closure: Environment.Closure,
+    writer: anytype,
+) Error!void {
     const prev_env = self.environment;
     defer self.environment = prev_env;
-    switch (closure) {
-        .existing => |env| self.environment = env,
+
+    return switch (closure) {
+        .existing => |existing| {
+            self.environment = existing;
+
+            for (body) |*statement| {
+                _ = try self.execute(statement, writer);
+            }
+        },
         .new => {
             var curr_env = Environment.initEnclosing(self.allocator, prev_env);
-            defer curr_env.deinit();
             self.environment = &curr_env;
+
+            for (body) |*stmt| {
+                _ = try self.execute(stmt, writer);
+            }
         },
-    }
-    for (body) |*statement| {
-        _ = try self.execute(statement, writer);
-    }
+    };
 }
 
 pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
@@ -378,8 +390,15 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
                 try self.execute(else_branch, writer);
         },
         .function => |function| { // `Stmt.Function`
-            const fun = try makeLoxFunction(self.allocator, function, self.environment);
-            try self.environment.define(function.name.lexeme, .{ .function = fun });
+            const fun = try FunctionContext.makeLoxFunction(
+                self.allocator,
+                function,
+                self.environment,
+            );
+            try self.environment.define(
+                function.name.lexeme,
+                .{ .function = fun },
+            );
         },
         .print_stmt => |expr| {
             printValue(writer, try self.evaluate(expr));
@@ -393,7 +412,10 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
             return runtime_error; // trick to propagate return values across call stack
         },
         .var_stmt => |var_stmt| {
-            const value = if (var_stmt.initializer) |expr| try self.evaluate(expr) else Value.Nil;
+            const value = if (var_stmt.initializer) |expr|
+                try self.evaluate(expr)
+            else
+                Value.Nil;
             try self.environment.define(var_stmt.name.lexeme, value);
         },
         .while_stmt => |while_stmt| {
@@ -406,18 +428,23 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
     return Value.Nil;
 }
 
-/// Each time `Resolver` visits a variable, it tells the interpreter how many
-/// scopes there are between the current scope and the scope where the variable
-/// is defined. At runtime, this corresponds exactly to the number of
-/// environments between the current one and the enclosing one where the
-/// interpreter can find the variable’s value. The resolver hands that number
-/// to the interpreter by calling this function.
-///
-/// [See link](https://craftinginterpreters.com/resolving-and-binding.html#interpreting-resolved-variables)
-fn resolve(self: *Self, expr: *Expr, depth: usize) Allocator.Error!void {
-    // Our interpreter now has access to each variable’s resolved location.
-    // Finally, we get to make use of that. We replace the visit method for
-    // variable expressions with this:
+// resolve()
+// Each time `Resolver` visits a variable, it tells the interpreter how many
+// scopes there are between the current scope and the scope where the variable
+// is defined. At runtime, this corresponds exactly to the number of
+// environments between the current one and the enclosing one where the
+// interpreter can find the variable’s value. The resolver hands that number
+// to the interpreter by calling this function.
+//
+// See https://craftinginterpreters.com/resolving-and-binding.html#interpreting-resolved-variables
+//
+// Our interpreter now has access to each variable’s resolved location.
+// Finally, we get to make use of that. We replace the visit method for
+// variable expressions with this:
+//
+// FIXME: The resolve() function is present, but it's not clear from this code
+// snippet how it's integrated into the overall interpretation process.
+pub fn resolve(self: *Self, expr: *Expr, depth: i32) Allocator.Error!void {
     try self.locals.put(expr, depth);
 }
 
@@ -432,7 +459,7 @@ pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!vo
 
         if (self.globals.values.get("clock")) |value| {
             const fun = value.callable;
-            assert(@TypeOf(fun) == *LoxCallable);
+            assert(@TypeOf(fun) == *Value.LoxCallable);
             assert((fun.arity() == 0) and mem.eql(u8, fun.toString(), "<native fn>"));
             assert(@TypeOf(fun.call(self, &[_]Value{}).num) == f64);
         }
@@ -465,7 +492,7 @@ pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!vo
     }
 }
 
-const clockGlobalCallable: LoxCallable = .{
+const clockGlobalCallable: Value.LoxCallable = .{
     .arityFn = struct {
         fn arity() usize {
             return 0;

@@ -6,6 +6,8 @@ else
 	EXE := ./zig-out/bin/main
 endif
 
+TEST_FILE := test.lox
+
 define generate_sources
 	$(wildcard src/*.zig)
 endef # or use `$(shell find src -name '*.zig')`
@@ -88,22 +90,43 @@ pre-valgrind:
 
 valgrind-tokenize:
 	make -j4 pre-valgrind
-	$(VALGRIND) $(EXE) tokenize test.lox $(TRACE_FLAGS)
+	$(VALGRIND) $(EXE) tokenize $(TEST_FILE) $(TRACE_FLAGS)
 
 valgrind-parse:
 	make -j4 pre-valgrind
-	$(VALGRIND) $(EXE) parse test.lox $(TRACE_FLAGS)
+	$(VALGRIND) $(EXE) parse $(TEST_FILE) $(TRACE_FLAGS)
 
 valgrind-evaluate:
 	make -j4 pre-valgrind
-	$(VALGRIND) $(EXE) evaluate test.lox $(TRACE_FLAGS)
+	$(VALGRIND) $(EXE) evaluate $(TEST_FILE) $(TRACE_FLAGS)
 
 valgrind-run:
 	make -j4 pre-valgrind
-	$(VALGRIND) $(EXE) run test.lox $(TRACE_FLAGS)
+	$(VALGRIND) $(EXE) run $(TEST_FILE) $(TRACE_FLAGS)
 
+
+#
+# EXAMPLES
+#
+
+define generate_example_sources
+	$(wildcard examples/*.lox)
+endef # or use `$(shell find src/examples -name '*.lox')`
+
+EXAMPLE_FILES := $(call generate_example_sources)
+
+.PHONY: run-examples
+run-examples:
+	make -j4 pre-valgrind
+	@printf "Running command 'run' on examples\n└─\x1b[37m$(EXAMPLE_FILES)\x1b[0m\n"
+	@$(foreach src,$(EXAMPLE_FILES), \
+		printf "\x1b[37mInterpreting file\n└─ $(src)\x1b[0m\n"; \
+		$(VALGRIND) $(EXE) run $(src) $(TRACE_FLAGS); \
+	)
 
 .PHONY: all
+
+
 
 # // Usage:
 # //

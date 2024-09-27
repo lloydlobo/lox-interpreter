@@ -8,6 +8,8 @@ const Allocator = mem.Allocator;
 
 const debug = @import("debug.zig");
 
+pub const Code = u8;
+
 pub const ErrorCode = enum(u8) {
     exit_success = 0,
     exit_failure = 1,
@@ -60,21 +62,23 @@ comptime {
     assert(1 << 12 == 4096);
 }
 
-const debug_trace_flags: [7]bool = .{
+const debug_trace_flags: [8]bool = .{
     debug.is_trace_compiler,
     debug.is_trace_environment,
     debug.is_trace_garbage_collector,
     debug.is_trace_interpreter,
     debug.is_trace_parser,
+    debug.is_trace_resolver,
     debug.is_trace_scanner,
     debug.is_trace_virtual_machine,
 };
 
+/// NOTE: Manually change std.log.debug to std.log.warn to log in tests.
 /// NOTE: `@src() std.builtin.SourceLocation` ─ Must be called in a function.
 pub fn tracesrc(comptime src: anytype, comptime fmt: []const u8, args: anytype) void {
     if (comptime any(bool, debug_trace_flags, null)) {
-        const src_fmt = "{s}{s}:{s}:{d}:{d}{s}";
-        const src_args = .{ COLOR_WHITE, src.file, src.fn_name, src.line, src.column, COLOR_RESET };
+        const src_fmt = "{s}{s}:{s}{s}:{d}{s}{s}:{d}{s}";
+        const src_args = .{ COLOR_WHITE, src.file, COLOR_BOLD, src.fn_name, src.line, COLOR_RESET, COLOR_WHITE, src.column, COLOR_RESET };
         const args_fmt = "\n" ++ COLOR_YELLOW ++ "└─ " ++ COLOR_CYAN ++ fmt ++ COLOR_RESET;
 
         var buffer: [1 << 11]u8 = undefined;

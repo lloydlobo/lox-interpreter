@@ -10,19 +10,40 @@ const root = @import("root.zig");
 const Scanner = @import("scanner.zig").Scanner;
 const Token = @import("token.zig");
 
-var g_had_runtime_error: bool = false;
-var g_runtime_error_count: usize = 0;
-var g_had_error: bool = false;
-var g_error_count: usize = 0;
+// # NOTES
+//
+// ## Interpreter
+//
+// * Using a more structured error handling approach instead of global variables.
+// * Ensuring proper memory management for all allocated objects.
+// * Implementing a more direct method for handling function returns.
+// * Ensuring the resolver is properly integrated into the interpretation process.
+//
+// ## Resolver
+//
+// * Consider unifying the error handling approach between the resolver and interpreter.
+// * Consider making the handling of global variables more explicit in both the resolver and interpreter.
+
+/// Toggle flag for new work-in-progress features.
+///
+/// * 20240927040854UTC
+///   https://craftinginterpreters.com/resolving-and-binding.html#static-scope
+pub const g_is_stable_feature_flag = false;
+
+// Just use this to read, and not edit globally but from functions in `main.zig`.
+pub var g_had_runtime_error: bool = false;
+pub var g_runtime_error_count: usize = 0;
+pub var g_had_error: bool = false;
+pub var g_error_count: usize = 0;
 
 pub fn runtimeError(token: Token, comptime message: []const u8, args: anytype) void {
-    std.debug.print(message ++ "\n[line {d}]\n", args ++ .{token.line});
+    root.eprint(message ++ "\n[line {d}]\n", args ++ .{token.line});
     g_had_runtime_error = true;
     g_runtime_error_count += 1;
 }
 
 pub fn report(line: u32, comptime where: []const u8, comptime message: []const u8, args: anytype) void {
-    std.debug.print("[line {d}] Error" ++ where ++ ": " ++ message ++ "\n", .{line} ++ args);
+    root.eprint("[line {d}] Error" ++ where ++ ": " ++ message ++ "\n", .{line} ++ args);
     g_had_error = true;
     g_error_count += 1;
 }
@@ -110,14 +131,19 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
             }
 
             var interpreter = try Interpreter.init(allocator);
-            // We do need to actually run the resolver, though. We insert the
-            // new pass after the parser does its magic.
-            var resolver = Resolver.init(allocator, &interpreter);
-            try resolver.resolveStatements(statements);
-            if (comptime debug.is_trace_interpreter) {
-                var it = (try interpreter.locals.clone()).iterator();
-                while (it.next()) |entry| {
-                    root.tracesrc(@src(), "depth:'{any}','{}'", .{ entry.value_ptr.*, entry.key_ptr.* });
+            if (comptime !g_is_stable_feature_flag) {
+                // We do need to actually run the resolver, though.
+                // We insert the new pass after the parser does its magic.
+                var resolver = Resolver.init(allocator, &interpreter);
+                try resolver.resolveStatements(statements);
+                if (g_had_error) {
+                    break :blk;
+                }
+                if (comptime debug.is_trace_interpreter) {
+                    var it = (try interpreter.locals.clone()).iterator();
+                    while (it.next()) |entry| {
+                        root.tracesrc(@src(), "depth:'{any}','{}'", .{ entry.value_ptr.*, entry.key_ptr.* });
+                    }
                 }
             }
             try interpreter.interpret(statements, writer);

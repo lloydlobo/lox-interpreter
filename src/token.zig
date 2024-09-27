@@ -7,9 +7,18 @@ const formatNumber = @import("root.zig").formatNumber;
 const Token = @This();
 
 lexeme: []const u8,
+line: u32, // Default: 1
 literal: ?Literal,
 type: Type,
-line: u32,
+
+pub fn make(lexeme: []const u8, line: u32, literal: ?Literal, @"type": Type) Token {
+    return .{
+        .lexeme = lexeme,
+        .line = line,
+        .literal = literal,
+        .type = @"type",
+    };
+}
 
 pub const Type = enum {
     // Single-character tokens
