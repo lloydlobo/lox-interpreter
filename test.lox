@@ -12,8 +12,12 @@ var a = "first";
 // interpreter to use the environment for now
 // Also should this be an error or a feature?
 //
-a = "second";
-print a;
+{
+    a = "second";
+    print a;
+}
+a = "third";
+print a; //> third
 
 
 fun global_function() {

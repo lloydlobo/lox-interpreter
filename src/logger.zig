@@ -3,10 +3,19 @@ const SourceLocation = std.builtin.SourceLocation;
 
 const Logger = @This();
 
-pub const newline = "\n" ++ color_reset ++ "└─ ";
+const with_vertical_padding = false;
+const v_pad = if (with_vertical_padding) "\n" else "";
+const with_horizontal_padding = true;
+const h_pad = if (with_horizontal_padding) "    " else "";
+
 pub const color_reset = "\x1b[0m";
 pub const color_bold = "\x1b[1m";
 pub const color_white = "\x1b[37m";
+pub const color_red = "\x1b[31m";
+
+const glyph_color = color_white;
+
+pub const newline = "\n" ++ color_reset ++ "\t" ++ glyph_color ++ "└─ " ++ color_reset;
 
 pub fn log(
     comptime level: LogLevel,
@@ -15,9 +24,19 @@ pub fn log(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    const with_vertical_padding = false;
-    const v_pad = if (with_vertical_padding) "\n" else "";
+    // const root = @import("root.zig");
+    // and !root.any(root.debug_trace_flags
+    if (level == .info) {
+        return;
+    }
+
     const stderr = std.io.getStdErr().writer();
+
+    // Strip the "src/" prefix from the source file path if it exists
+    const stripped_file = if (std.mem.startsWith(u8, src.file, "src/"))
+        src.file[4..]
+    else
+        src.file;
 
     // Buffer to capture the fully formatted scope (including parent scopes)
     var scope_buffer: [256]u8 = undefined;
@@ -30,19 +49,23 @@ pub fn log(
     // Write the full log message
     stderr.print(
         v_pad ++
-            "{s}[{s}] {s}:{s}{s}:{d}{s}:{d}:{s} {s}{s}:{s}{s} " ++
+            h_pad ++
+            "{s}{s}{s}{s}{s}: {s}:{s}{s}:{d}{s}:{d}:{s} {s}{s}:{s}{s} " ++
             format ++
             color_reset ++
             "\n" ++
             v_pad,
         .{
+            glyph_color,
             color_white,
             scope_buffer[0 .. scope_writer.context.getPos() catch unreachable],
-            src.file,
-            color_bold,
+            glyph_color,
+            color_reset,
+            stripped_file,
+            color_white,
             src.fn_name,
             src.line,
-            color_reset,
+            color_white,
             src.column,
             color_bold,
             level.getColor(),

@@ -3,7 +3,7 @@ const assert = std.debug.assert;
 
 const AstPrinter = @import("astprinter.zig").AstPrinter;
 const Interpreter = @import("interpreter.zig");
-const Logger = @import("logger.zig");
+const logger = @import("logger.zig");
 const Parser = @import("parser.zig");
 const Resolver = @import("resolver.zig");
 const Scanner = @import("scanner.zig").Scanner;
@@ -29,7 +29,7 @@ const root = @import("root.zig");
 ///
 /// * 20240927040854UTC
 ///   https://craftinginterpreters.com/resolving-and-binding.html#static-scope
-pub const g_is_stable_feature_flag = false;
+pub const g_is_stable_feature_flag = true;
 
 // Just use this to read, and not edit globally but from functions in `main.zig`.
 pub var g_had_runtime_error: bool = false;
@@ -140,17 +140,14 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
                 if (g_had_error) {
                     break :blk;
                 }
-                Logger.info(.{}, @src(), "Locals count: {d}", .{interpreter.locals.count()});
-                assert(interpreter.locals.count() > 0); // this can be 0 too, but oh well!
+                logger.info(.{}, @src(), "Locals count: {d}", .{interpreter.locals.count()});
+                assert(interpreter.simplocals.count() > 0); // this can be 0 too, but oh well!
 
                 if (comptime debug.is_trace_interpreter) {
-                    var it = (try interpreter.locals.clone()).iterator();
+                    var it = (try interpreter.simplocals.clone()).iterator();
                     while (it.next()) |entry| {
-                        Logger.debug(.{}, @src(), "Locals Key Value Pair{s}Depth: {any}{any}", .{
-                            Logger.newline,
-                            entry.value_ptr.*,
-                            entry.key_ptr.*,
-                        });
+                        logger.debug(.{}, @src(), "Locals Key Value Pair.{s}[key: {s}, depth: {any}]", //
+                            .{ logger.newline, entry.key_ptr.*, entry.value_ptr.* });
                     }
                 }
             }
@@ -162,15 +159,8 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
     if (comptime debug.is_trace_interpreter) {
         const total_errors = g_runtime_error_count + g_error_count;
         if (total_errors != 0) {
-            Logger.err(.{}, @src(), "Found {d} error(s).{s}{s}: {d}{s}{s}: {d}", .{
-                total_errors,
-                Logger.newline,
-                root.ErrorCode.runtime_error.toString(),
-                g_runtime_error_count,
-                Logger.newline,
-                root.ErrorCode.syntax_error.toString(),
-                g_error_count,
-            });
+            logger.err(.{}, @src(), "Found {d} error(s).{s}{s}: {d}{s}{s}: {d}", //
+                .{ total_errors, logger.newline, root.ErrorCode.runtime_error.toString(), g_runtime_error_count, logger.newline, root.ErrorCode.syntax_error.toString(), g_error_count });
         }
     }
 
@@ -188,7 +178,7 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
 pub fn main() !void {
     const args = try std.process.argsAlloc(std.heap.page_allocator);
     defer std.process.argsFree(std.heap.page_allocator, args);
-    Logger.debug(.{}, @src(), "Process args: {s} {s}", .{ Logger.newline, args });
+    logger.debug(.{}, @src(), "Process args: {s} {s}", .{ logger.newline, args });
 
     if (args.len < 3) {
         std.debug.print("Usage: ./your_program.sh tokenize <filename>\n", .{});
@@ -200,7 +190,7 @@ pub fn main() !void {
 
     if (Command.fromString(command)) |cmd| {
         if (comptime debug.is_testing) {
-            Logger.info(.{}, @src(), "Command: {}", .{cmd});
+            logger.info(.{}, @src(), "Command: {}", .{cmd});
         }
     } else {
         std.debug.print("Unknown command: {s}\n", .{command});

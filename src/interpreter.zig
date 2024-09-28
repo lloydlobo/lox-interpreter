@@ -8,7 +8,7 @@ const Environment = @import("environment.zig");
 const ErrorCode = @import("main.zig").ErrorCode;
 const Expr = @import("expr.zig").Expr;
 const FunctionContext = @import("loxfunction.zig");
-const Logger = @import("logger.zig");
+const logger = @import("logger.zig");
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
 const Value = @import("expr.zig").Expr.Value;
@@ -86,7 +86,7 @@ pub fn handleRuntimeError(err: Error) Allocator.Error!void {
         error.wrong_arity => runtimeError(undeclared_token, "Wrong function arguments arity '{s}'.", .{undeclared_token.lexeme}),
         error.not_calable => runtimeError(undeclared_token, "Value not callable '{s}'.", .{undeclared_token.lexeme}),
         error.io_error => root.exit(.exit_failure, "Encountered i/o error at runtime.", .{}),
-        error.Return => Logger.err(.{}, @src(), "Trick to propagate return values with errors '{any}' {any}.", .{ runtime_token, runtime_return_value }),
+        error.Return => logger.err(.{}, @src(), "Trick to propagate return values with errors '{any}' {any}.", .{ runtime_token, runtime_return_value }),
         else => |other| other,
     };
 }
@@ -267,16 +267,27 @@ fn visitAssignExpr(self: *Self, assign: Expr.Assign) Error!Value {
     //         return err;
     //     };
     // } else {
-    if (self.locals.get(assign.value)) |distance| {
-        _ = self.environment.assignAt(distance, assign.name, value) catch |err| {
-            Logger.warn(.{}, @src(), "Failed to assignAt: {any}", .{err}); // └─ IDENTIFIER hello null
+    const local_value: ?i32 = self.simplocals.get(value.str);
+    logger.warn(.{}, @src(), "Got? simplocal value.{s}[key: {s}, value: {any}]", //
+        .{ logger.newline, value.str, local_value });
 
+    if (self.simplocals.get(assign.name.lexeme)) |distance| {
+        _ = self.environment.assignAt(distance, assign.name, value) catch |err| {
+            logger.warn(.{}, @src(), "Failed to assignAt.{s}[err: {any}]", //
+                .{ logger.newline, err }); // └─ IDENTIFIER hello null
             undeclared_token = assign.name;
             return err;
         };
     } else {
         self.globals.assign(assign.name, value) catch |err| {
-            Logger.warn(.{}, @src(), "Failed to assign: {any}", .{err}); // └─ IDENTIFIER hello null
+            logger.warn(.{}, @src(), "Failed to assign.{s}[err: {any}]", //
+                .{ logger.newline, err }); // └─ IDENTIFIER hello null
+            _ = self.environment.assign(assign.name, value) catch |e| {
+                logger.warn(.{}, @src(), "Failed to assign.{s}[err: {any}]", //
+                    .{ logger.newline, err }); // └─ IDENTIFIER hello null
+                undeclared_token = assign.name;
+                return e;
+            };
             undeclared_token = assign.name;
             return err;
         };
@@ -288,7 +299,10 @@ fn visitAssignExpr(self: *Self, assign: Expr.Assign) Error!Value {
 
 fn visitVariableExpr(self: *Self, expr: *Expr) Error!Value {
     if (root.unionPayloadPtr(Token, expr)) |variable| {
-        Logger.debug(.{}, @src(), "visitVariableExpr: {any}", .{variable}); // └─ IDENTIFIER hello null
+        logger.debug(.{}, @src(), "visitVariableExpr: {any}", .{variable}); // └─ IDENTIFIER hello null
+    } else {
+        logger.warn(.{}, @src(), "Failed to find union payload.{s}[expr: {any}].", //
+            .{ logger.newline, expr }); // └─ IDENTIFIER hello null
     }
 
     // if (comptime main.g_is_stable_feature_flag) {
@@ -299,22 +313,14 @@ fn visitVariableExpr(self: *Self, expr: *Expr) Error!Value {
     // } else {
     // TODO:
     // https://craftinginterpreters.com/resolving-and-binding.html#accessing-a-resolved-variable
+
     return self.lookupVariable(expr.variable, expr) catch |err| blk: {
-        Logger.warn(.{}, @src(), "Failed to lookup variable.{s}[variable: {s}]{s}[err: {any}]", .{
-            Logger.newline,
-            expr.variable,
-            Logger.newline,
-            err,
-        });
+        logger.warn(.{}, @src(), "Failed to lookup variable.{s}[variable: {s}]{s}[err: {any}]", //
+            .{ logger.newline, expr.variable, logger.newline, err });
 
         break :blk self.environment.get(expr.variable) catch |e| inner_blk: {
-            Logger.warn(.{}, @src(), "Failed to get variable value from environment.{s}[variable: {s}]{s}[err: {any}]", .{
-                Logger.newline,
-                expr.variable,
-                Logger.newline,
-                e,
-            });
-
+            logger.err(.{}, @src(), "Failed to get variable value from environment.{s}[variable: {s}]{s}[err: {any}]", //
+                .{ logger.newline, expr.variable.lexeme, logger.newline, e });
             undeclared_token = expr.variable;
             break :inner_blk e;
         };
@@ -337,23 +343,35 @@ fn visitVariableExpr(self: *Self, expr: *Expr) Error!Value {
 //      without relying on local resolution.
 fn lookupVariable(self: *Self, name: Token, expr: *Expr) Error!Value {
     return blk: {
-        const distance: i32 = self.locals.get(expr) orelse {
-            Logger.warn(.{}, @src(), "Variable not found in locals. Now looking for '{s}' in globals.", .{
+        const distance: i32 = self.simplocals.get(expr.variable.lexeme) orelse {
+            logger.warn(.{}, @src(), "Variable not found in simplocals. Now looking for '{s}' in globals.", .{
                 name.lexeme,
             });
             const global_value = self.globals.get(expr.variable) catch |err| outer_blk: {
-                Logger.warn(.{}, @src(), "Failed to find variable value from globals.{s}[name: {s}]{s}[err: {any}]", .{ Logger.newline, name.lexeme, Logger.newline, err });
+                logger.warn(.{}, @src(), "Failed to find variable value from globals.{s}[name: {s}]{s}[err: {any}]", //
+                    .{ logger.newline, name.lexeme, logger.newline, err });
                 break :outer_blk self.environment.get(expr.variable) catch |e| inner_blk: {
                     undeclared_token = expr.variable;
-                    Logger.err(.{}, @src(), "Failed to find variable value in environment.{s}[name: {s}]{s}[err: {any}]", .{ Logger.newline, name.lexeme, Logger.newline, err });
+                    logger.err(.{}, @src(), "Failed to find variable value in environment.{s}[name: {s}]{s}[err: {any}]", //
+                        .{ logger.newline, name.lexeme, logger.newline, e });
                     break :inner_blk e;
                 };
             };
-            Logger.info(.{}, @src(), "Got variable value from interpreters environment instead.{s}[value: {any}]", .{ Logger.newline, global_value });
+            logger.info(.{}, @src(), "Got variable value from interpreters environment instead.{s}[value: {any}]", //
+                .{ logger.newline, global_value });
             break :blk global_value;
         };
 
-        break :blk try self.environment.getAt(distance, expr.variable); // catch |err| blk: {
+        break :blk self.environment.getAt(distance, expr.variable) catch |err| outer_blk: {
+            logger.warn(.{}, @src(), "Failed to getAt variable value from environment.{s}[name: {s}]{s}[err: {any}]", //
+                .{ logger.newline, name.lexeme, logger.newline, err });
+            break :outer_blk self.environment.get(expr.variable) catch |e| inner_blk: {
+                undeclared_token = expr.variable;
+                logger.err(.{}, @src(), "Failed to find variable value in environment.{s}[name: {s}]{s}[err: {any}]", //
+                    .{ logger.newline, name.lexeme, logger.newline, e });
+                break :inner_blk e;
+            };
+        };
     };
 }
 
@@ -361,18 +379,29 @@ fn lookupVariable(self: *Self, name: Token, expr: *Expr) Error!Value {
 // Visit methods do a **post-order traversal**—each node evaluates its
 // children before doing its own work.
 fn evaluate(self: *Self, expr: *Expr) Error!Value {
-    const result = switch (expr.*) {
-        .assign => |assign| try self.visitAssignExpr(assign),
+    return switch (expr.*) {
+        .assign => |assign| blk: {
+            if (comptime main.g_is_stable_feature_flag) {
+                // THIS WORKS!!
+                const value = try self.evaluate(assign.value);
+                _ = self.environment.assign(assign.name, value) catch |err| {
+                    undeclared_token = assign.name;
+                    break :blk err;
+                };
+                break :blk value;
+            } else {
+                break :blk try self.visitAssignExpr(assign);
+            }
+        },
+        .variable => |_| try self.visitVariableExpr(expr),
+
         .binary => |binary| try self.visitBinaryExpr(binary),
         .call => |call| try self.visitCallExpr(call),
         .grouping => |grouping| try self.evaluate(grouping),
         .literal => |literal| try self.visitLiteralExpr(literal),
         .logical => |logical| try self.visitLogicalExpr(logical),
         .unary => |unary| try self.visitUnaryExpr(unary),
-        .variable => |_| try self.visitVariableExpr(expr),
     };
-
-    return result;
 }
 
 // executeBlock()
@@ -486,9 +515,10 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
 // * The fallbacks and error handling are good, but ensure that if a variable
 //   is missing in both locals and globals, an appropriate runtime error is
 //   raised to catch the case where it's truly undeclared.
-pub fn resolve(self: *Self, expr: *Expr, depth: i32) Allocator.Error!void {
+pub fn resolve(self: *Self, expr: *Expr, name: Token, depth: i32) Allocator.Error!void {
+    _ = expr;
     // Maybe this `locals` does not point to resolvers `locals`??
-    try self.locals.put(expr, depth);
+    try self.simplocals.put(name.lexeme, depth);
 }
 
 pub fn interpretExpression(self: *Self, expr: *Expr, writer: anytype) Allocator.Error!void {
@@ -530,7 +560,7 @@ pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!vo
     }
     if (comptime debug.is_trace_interpreter) {
         for (try outputs.toOwnedSlice()) |value| {
-            Logger.debug(.{}, @src(), "output: '{any}'", .{value});
+            logger.debug(.{}, @src(), "output: '{any}'", .{value});
         }
     }
 }

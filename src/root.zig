@@ -37,6 +37,17 @@ pub const ErrorCode = enum(u8) {
     }
 };
 
+pub const debug_trace_flags: [8]bool = .{
+    debug.is_trace_compiler,
+    debug.is_trace_environment,
+    debug.is_trace_garbage_collector,
+    debug.is_trace_interpreter,
+    debug.is_trace_parser,
+    debug.is_trace_resolver,
+    debug.is_trace_scanner,
+    debug.is_trace_virtual_machine,
+};
+
 // ANSI color codes
 const COLOR_RESET = "\x1b[0m";
 const COLOR_BOLD = "\x1b[1m";
@@ -61,17 +72,6 @@ comptime {
     assert(1 << 11 == 2048);
     assert(1 << 12 == 4096);
 }
-
-const debug_trace_flags: [8]bool = .{
-    debug.is_trace_compiler,
-    debug.is_trace_environment,
-    debug.is_trace_garbage_collector,
-    debug.is_trace_interpreter,
-    debug.is_trace_parser,
-    debug.is_trace_resolver,
-    debug.is_trace_scanner,
-    debug.is_trace_virtual_machine,
-};
 
 pub fn tracesrcLog(
     comptime message_level: std.log.Level,

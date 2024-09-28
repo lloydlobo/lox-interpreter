@@ -168,7 +168,7 @@ fn declare(self: *Resolver, name: Token) Allocator.Error!void {
     // FIXME: How should we declare a function variable name if it is global.
     // since, we return immediately?
     if (self.isEmptyScopeStack()) {
-        logger.debug(loggerscope_declare, @src(), "Not a function type. Found empty stack.{s}[name: {any}]", //
+        logger.info(loggerscope_declare, @src(), "Not a function type. Found empty stack.{s}[name: {any}]", //
             .{ logger.newline, name });
         assert(!self.current_function.isFn());
         return;
@@ -191,7 +191,9 @@ fn declare(self: *Resolver, name: Token) Allocator.Error!void {
 // Once the initializer expression is done, the variable is ready
 // for prime time. We do that by (`define()`) defining it.
 fn define(self: *Resolver, name: Token) Error!void {
-    if (self.isEmptyScopeStack()) return root.tracesrc(@src(), "Did you make sure Resolver.init() filled in scopes? Found empty stack: {any}", .{name});
+    if (self.isEmptyScopeStack()) {
+        return logger.info(.{}, @src(), "Found empty stack.{s}[name: {any}]", .{ logger.newline, name });
+    }
 
     const is_resolved = true; //> is fully initialized and ready for use
     try self.getLastOrNullScopeStackPtr().?.put(name.lexeme, is_resolved);
@@ -237,8 +239,8 @@ fn resolveLocal(self: *Resolver, expr: *Expr, name: Token) Error!void {
             logger.info(logscope, @src(), "Interpreter is going to resolve.{s}[lexeme: {s}]", //
                 .{ logger.newline, name.lexeme });
 
-            try self.interpreter.resolve(@constCast(expr), scope_index - i);
-            assert(self.interpreter.locals.contains(expr)); // sanity check
+            try self.interpreter.resolve(@constCast(expr), name, scope_index - i);
+            assert(self.interpreter.simplocals.contains(name.lexeme)); // sanity check
             return;
         }
     }
@@ -293,8 +295,8 @@ pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
             try self.resolveExpr(expr_stmt);
         },
         .function => |function| {
-            logger.info(logscope, @src(), "Found function initializer.{s}[function: '{any}']", //
-                .{ logger.newline, function });
+            logger.info(logscope, @src(), "Found function initializer.{s}[function: '{s}']", //
+                .{ logger.newline, function.name });
             try self.declare(function.name);
             try self.define(function.name);
             try self.resolveFunction(&function, FunctionType.function);
@@ -496,7 +498,8 @@ test "variable declaration" {
         try ctx.resolver.resolveStatements(try ctx.statements.toOwnedSlice());
 
         // Assert that the variable was properly resolved
-        try testing.expect(ctx.interpreter.locals.contains(@constCast(var_expr)));
+        // try testing.expect(ctx.interpreter.simplocals.contains(@constCast(var_expr)));
+        try testing.expect(ctx.interpreter.simplocals.contains(@constCast(var_expr)));
     }
 }
 
