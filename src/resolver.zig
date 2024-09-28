@@ -265,7 +265,7 @@ fn resolveLocal(self: *Resolver, expr: *Expr, name: Token) Error!void {
 
             try self.interpreter.resolve(@constCast(expr), name, scope_index - i);
 
-            assert(self.interpreter.simplocals.contains(name.lexeme)); // sanity check
+            assert(self.interpreter.locals.contains(name.lexeme)); // sanity check
             return;
         }
     }
@@ -524,7 +524,7 @@ test "variable declaration" {
 
         // Assert that the variable was properly resolved
         // try testing.expect(ctx.interpreter.simplocals.contains(@constCast(var_expr)));
-        try testing.expect(ctx.interpreter.simplocals.contains(@constCast(var_expr)));
+        try testing.expect(ctx.interpreter.locals.contains(@constCast(var_expr)));
     }
 }
 

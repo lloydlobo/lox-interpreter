@@ -129,13 +129,19 @@ pub const Expr = union(enum) {
 
         pub fn format(self: Value, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             switch (self) {
-                .bool => |val| try std.fmt.format(writer, "{}", .{val}),
-                .callable => |val| try std.fmt.format(writer, "{any}", .{val}),
-                .function => |val| try std.fmt.format(writer, "{any}", .{val}),
+                .bool => |bool_| try std.fmt.format(writer, "{}", .{bool_}),
+                .callable => |lox_callable_ptr| try std.fmt.format(writer, "{s}(<arity {d}>)", .{
+                    lox_callable_ptr.*.toString(),
+                    lox_callable_ptr.*.arity(),
+                }),
+                .function => |lox_function_ptr| try std.fmt.format(writer, "{s}(<arity {d}>)", .{
+                    lox_function_ptr.*.toString(),
+                    lox_function_ptr.*.arity(),
+                }),
                 .nil => try std.fmt.format(writer, "nil", .{}),
-                .num => |val| try formatNumber(writer, val),
-                .ret => |val| try std.fmt.format(writer, "{any}", .{val}),
-                .str => |val| try std.fmt.format(writer, "{s}", .{val}),
+                .num => |@"f64"| try formatNumber(writer, @"f64"),
+                .ret => |lox_return_value_ptr| try std.fmt.format(writer, "{any}", .{lox_return_value_ptr}),
+                .str => |@"[]const u8"| try std.fmt.format(writer, "{s}", .{@"[]const u8"}),
             }
         }
     };

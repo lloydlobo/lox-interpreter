@@ -77,8 +77,8 @@ fn callFn(context: *anyopaque, interpreter: *Interpreter, arguments: []Value) Va
         .{ .existing = environment },
         root.stdout().writer(),
     ) catch |err| switch (err) {
-        error.Return => {
-            assert(Interpreter.runtime_error == error.Return and
+        error.@"return" => {
+            assert(Interpreter.runtime_error == error.@"return" and
                 Interpreter.runtime_token.type == .@"return");
             defer {
                 Interpreter.runtime_error = undefined;

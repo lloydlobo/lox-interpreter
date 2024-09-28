@@ -1,5 +1,8 @@
 print "file: test.lox";
 
+// `clock()` is a global function baked in, just like `print()` is.
+// Tested approx at UTC timestamp: 20240928053409UTC
+print clock(); //> 1727501631.727
 
 // TODO: Use []const u8 as key for `locals` autohashmap, instead of *Expr.
 // UNLESS, it prevents us from nesting similar named functions/variables.. etc

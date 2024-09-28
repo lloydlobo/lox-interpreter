@@ -2,17 +2,17 @@ const std = @import("std");
 const assert = std.debug.assert;
 const mem = std.mem;
 const Allocator = mem.Allocator;
-const AutoHashMap = std.AutoHashMap; // const StringHashMap = std.StringHashMap;
+const StringHashMap = std.StringHashMap;
 
 const Environment = @import("environment.zig");
 const ErrorCode = @import("main.zig").ErrorCode;
 const Expr = @import("expr.zig").Expr;
 const FunctionContext = @import("loxfunction.zig");
-const logger = @import("logger.zig");
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
 const Value = @import("expr.zig").Expr.Value;
 const debug = @import("debug.zig");
+const logger = @import("logger.zig");
 const main = @import("main.zig");
 const root = @import("root.zig");
 const runtimeError = @import("main.zig").runtimeError;
@@ -26,7 +26,7 @@ const Interpreter = @This(); // File struct
 allocator: Allocator,
 globals: *Environment,
 environment: *Environment,
-simplocals: std.StringHashMap(i32),
+locals: StringHashMap(i32),
 
 /// Uses thread-local variables to communicate out-of-band error information.
 /// See also:
@@ -50,25 +50,25 @@ const RuntimeError = error{
 };
 
 /// Not actual errors, but a way to propagate return values.
-const PropagationException = error{Return};
+const PropagationException = error{@"return"};
 
 pub const Error = RuntimeError ||
     PropagationException ||
     Environment.Error ||
     Allocator.Error;
 
+// TODO: Reason about the relationship between `globals` and `environment`.
 pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
     // NOTE: Shared pointer for globals and environment. So if in current
     // scope, when a value is put in `Interpreter.environment`, it is also
     // pointed to globals.
-    // TODO: Reason about the relationship between `globals` and `environment`.
     const globals = try Environment.init(allocator);
 
     var self: Interpreter = .{
         .allocator = allocator,
         .environment = globals,
         .globals = globals,
-        .simplocals = std.StringHashMap(i32).init(allocator),
+        .locals = StringHashMap(i32).init(allocator),
     };
 
     {
@@ -83,14 +83,14 @@ pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
 
 pub fn handleRuntimeError(err: Error) Allocator.Error!void {
     return switch (err) {
+        error.@"return" => logger.err(.{}, @src(), "Trick to propagate return values with errors '{any}' {any}.", .{ runtime_token, runtime_return_value }),
+        error.io_error => root.exit(.exit_failure, "Encountered i/o error at runtime.", .{}),
+        error.not_calable => runtimeError(undeclared_token, "Value not callable '{s}'.", .{undeclared_token.lexeme}),
         error.operand_not_number => runtimeError(runtime_token, "Operand must be a number.", .{}),
-        error.operands_not_numbers => runtimeError(runtime_token, "Operands must be numbers.", .{}),
         error.operands_neither_numbers_nor_strings => runtimeError(runtime_token, "Operands must two numbers or two strings.", .{}),
+        error.operands_not_numbers => runtimeError(runtime_token, "Operands must be numbers.", .{}),
         error.variable_not_declared => runtimeError(undeclared_token, "Undefined variable '{s}'.", .{undeclared_token.lexeme}),
         error.wrong_arity => runtimeError(undeclared_token, "Wrong function arguments arity '{s}'.", .{undeclared_token.lexeme}),
-        error.not_calable => runtimeError(undeclared_token, "Value not callable '{s}'.", .{undeclared_token.lexeme}),
-        error.io_error => root.exit(.exit_failure, "Encountered i/o error at runtime.", .{}),
-        error.Return => logger.err(.{}, @src(), "Trick to propagate return values with errors '{any}' {any}.", .{ runtime_token, runtime_return_value }),
         else => |other| other,
     };
 }
@@ -266,11 +266,11 @@ fn visitAssignExpr(self: *Self, assign: Expr.Assign) Error!Value {
     const value = try self.evaluate(assign.value);
 
     // Avoid exta work by matching cached value via depth.
-    const depth: ?i32 = self.simplocals.get(value.str);
+    const depth: ?i32 = self.locals.get(value.str);
     logger.info(.{}, @src(), "Variable local depth if cached.{s}[key: {s}, value: {any}]", //
         .{ logger.newline, value.str, depth });
 
-    if (self.simplocals.get(assign.name.lexeme)) |distance| {
+    if (self.locals.get(assign.name.lexeme)) |distance| {
         self.environment.assignAt(distance, assign.name, value) catch |err| {
             logger.warn(.{}, @src(), "Failed to assignAt.{s}[err: {any}]", //
                 .{ logger.newline, err });
@@ -320,7 +320,7 @@ fn visitVariableExpr(self: *Self, expr: *Expr) Error!Value {
 
 fn lookupVariable(self: *Self, name: Token, expr: *Expr) Error!Value {
     return blk: {
-        const distance: i32 = self.simplocals.get(expr.variable.lexeme) orelse {
+        const distance: i32 = self.locals.get(expr.variable.lexeme) orelse {
             logger.warn(.{}, @src(), "Variable not found in simplocals. Now looking for '{s}' in globals...", .{
                 name.lexeme,
             });
@@ -454,7 +454,7 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
             const value = if (return_stmt.value) |val| try self.evaluate(val) else null;
             runtime_return_value = Expr.LoxReturnValue.fromValue(value).ret;
             runtime_token = return_stmt.keyword;
-            runtime_error = error.Return;
+            runtime_error = error.@"return";
             return runtime_error; // trick to propagate return values across call stack
         },
         .var_stmt => |var_stmt| {
@@ -474,32 +474,9 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
     return Value.Nil;
 }
 
-// resolve()
-// Each time `Resolver` visits a variable, it tells the interpreter how many
-// scopes there are between the current scope and the scope where the variable
-// is defined. At runtime, this corresponds exactly to the number of
-// environments between the current one and the enclosing one where the
-// interpreter can find the variable’s value. The resolver hands that number
-// to the interpreter by calling this function.
-//
-// See https://craftinginterpreters.com/resolving-and-binding.html#interpreting-resolved-variables
-//
-// Our interpreter now has access to each variable’s resolved location.
-// Finally, we get to make use of that. We replace the visit method for
-// variable expressions with this:
-//
-// FIXME: The resolve() function is present, but it's not clear from this code
-// snippet how it's integrated into the overall interpretation process.
-// * You should ensure that self.globals.get() in lookupVariable() and
-//   self.globals.assign() in visitAssignExpr() are properly defined to handle
-//   global variable retrieval and assignment.
-// * The fallbacks and error handling are good, but ensure that if a variable
-//   is missing in both locals and globals, an appropriate runtime error is
-//   raised to catch the case where it's truly undeclared.
 pub fn resolve(self: *Self, expr: *Expr, name: Token, depth: i32) Allocator.Error!void {
     _ = expr;
-    // Maybe this `locals` does not point to resolvers `locals`??
-    try self.simplocals.put(name.lexeme, depth);
+    try self.locals.put(name.lexeme, depth);
 }
 
 pub fn interpretExpression(self: *Self, expr: *Expr, writer: anytype) Allocator.Error!void {
@@ -568,6 +545,29 @@ const clockGlobalCallable: Value.LoxCallable = .{
         }
     }.toString,
 };
+
+// resolve()
+// Each time `Resolver` visits a variable, it tells the interpreter how many
+// scopes there are between the current scope and the scope where the variable
+// is defined. At runtime, this corresponds exactly to the number of
+// environments between the current one and the enclosing one where the
+// interpreter can find the variable’s value. The resolver hands that number
+// to the interpreter by calling this function.
+//
+// See https://craftinginterpreters.com/resolving-and-binding.html#interpreting-resolved-variables
+//
+// Our interpreter now has access to each variable’s resolved location.
+// Finally, we get to make use of that. We replace the visit method for
+// variable expressions with this:
+//
+// FIXME: The resolve() function is present, but it's not clear from this code
+// snippet how it's integrated into the overall interpretation process.
+// * You should ensure that self.globals.get() in lookupVariable() and
+//   self.globals.assign() in visitAssignExpr() are properly defined to handle
+//   global variable retrieval and assignment.
+// * The fallbacks and error handling are good, but ensure that if a variable
+//   is missing in both locals and globals, an appropriate runtime error is
+//   raised to catch the case where it's truly undeclared.
 
 // lookupVariable()
 // There are a couple of things going on here. First, we look up the resolved

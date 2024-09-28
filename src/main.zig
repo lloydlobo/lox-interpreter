@@ -140,11 +140,11 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
                 if (g_had_error) {
                     break :blk;
                 }
-                logger.info(.{}, @src(), "Locals count: {d}", .{interpreter.simplocals.count()});
-                assert(interpreter.simplocals.count() > 0); // this can be 0 too, but oh well!
+                logger.info(.{}, @src(), "Locals count: {d}", .{interpreter.locals.count()});
+                assert(interpreter.locals.count() > 0); // this can be 0 too, but oh well!
 
                 if (comptime debug.is_trace_interpreter) {
-                    var it = (try interpreter.simplocals.clone()).iterator();
+                    var it = (try interpreter.locals.clone()).iterator();
                     while (it.next()) |entry| {
                         logger.debug(.{}, @src(), "Locals Key Value Pair.{s}[key: {s}, depth: {any}]", //
                             .{ logger.newline, entry.key_ptr.*, entry.value_ptr.* });
