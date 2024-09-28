@@ -3,12 +3,12 @@ const assert = std.debug.assert;
 
 const AstPrinter = @import("astprinter.zig").AstPrinter;
 const Interpreter = @import("interpreter.zig");
-const logger = @import("logger.zig");
 const Parser = @import("parser.zig");
 const Resolver = @import("resolver.zig");
 const Scanner = @import("scanner.zig").Scanner;
 const Token = @import("token.zig");
 const debug = @import("debug.zig");
+const logger = @import("logger.zig");
 const root = @import("root.zig");
 
 // # NOTES
@@ -141,7 +141,14 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
                     break :blk;
                 }
                 logger.info(.{}, @src(), "Locals count: {d}", .{interpreter.locals.count()});
-                assert(interpreter.locals.count() > 0); // this can be 0 too, but oh well!
+
+                comptime {
+                    const is_resolver_feature_flag = !g_is_stable_feature_flag;
+                    if (!is_resolver_feature_flag) {
+                        assert(interpreter.environment.values.count() == 0);
+                        assert(interpreter.locals.count() == 0); // this can be 0 too, but oh well!
+                    }
+                }
 
                 if (comptime debug.is_trace_interpreter) {
                     var it = (try interpreter.locals.clone()).iterator();

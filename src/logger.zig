@@ -24,10 +24,8 @@ pub fn log(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    // const root = @import("root.zig");
-    // and !root.any(root.debug_trace_flags
-    if (level == .info) {
-        // return;
+    if (comptime level == .info) {
+        return; // skip logging `LogLevel.info`
     }
 
     const stderr = std.io.getStdErr().writer();

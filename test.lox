@@ -1,5 +1,7 @@
 print "file: test.lox";
 
+27 - 60 >= -99 * 2 / 99 + 76;
+
 // `clock()` is a global function baked in, just like `print()` is.
 // Tested approx at UTC timestamp: 20240928053409UTC
 print clock(); //> 1727501631.727

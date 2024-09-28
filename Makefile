@@ -6,15 +6,17 @@ else
 	EXE := ./zig-out/bin/main
 endif
 
-TEST_FILE := test.lox
 
 define generate_sources
 	$(wildcard src/*.zig)
 endef # or use `$(shell find src -name '*.zig')`
 
-SRCS := $(call generate_sources)
+TEST_FILE := test.lox
 TRACE_FLAGS :=  -freference-trace
 VALGRIND := valgrind --leak-check=full --show-leak-kinds=all -s --track-origins=yes
+ZIG_FILES := $(call generate_sources)
+ZIG_SRCS := $(shell find src -name '*.zig' -not -name 'test_*.zig')
+ZIG_TEST_FILES := $(shell find src -name 'test_*.zig')
 
 .PHONY: clean
 clean:
@@ -22,36 +24,46 @@ clean:
 	rm -rf zig-out .zig-cache vgcore.*
 	echo $$?
 
-.PHONY: ast-check
-ast-check:
-	@printf "Running ast-check\n└─\x1b[37m$(SRCS)\x1b[0m\n"
-	@$(foreach src,$(call generate_sources), \
-		# echo "Running ast-check on $(src)"; \
-		zig ast-check $(src); \
-	)
+# 	@$(foreach src,$(call generate_sources), \
+# 		# echo "Running ast-check on $(src)"; \
+# 		zig ast-check $(src); \
+# 	)
+ast-check: $(ZIG_FILES)
+	@echo "Running ast-check in parallel on $(ZIG_FILES)"
+	@echo $(ZIG_FILES) | tr ' ' '\n' | parallel -j $(shell nproc) --halt-on-error 1 'zig ast-check {};'
+
+
+#	@$(foreach src,$(ZIG_SRCS), \
+#		echo "Running zig test on $(src)"; \
+#		zig ast-check $(src); \
+#		zig test $(src) $(TRACE_FLAGS); \
+#	)
+.PHONY: test-zig-srcs
+test-zig-srcs: $(ZIG_SRCS)
+	@make ast-check
+	@echo "Running zig tests in parallel on $(ZIG_SRCS)"
+	@echo $(ZIG_SRCS) | tr ' ' '\n' | parallel -j $(shell nproc) --halt-on-error 1 'echo "Running zig test on {}"; zig ast-check {}; zig test {} $(TRACE_FLAGS);'
+
+.PHONY: test-zig-srcs
+SUPPRESS_STDERR_FLAGS := 2>&1 | head
+SUPPRESS_STDERR_FLAGS = 
+# : echo $(ZIG_TEST_FILES) | tr ' ' '\n' | parallel -j $(shell nproc) --halt-on-error 1 'echo "Running zig test on {}"; zig ast-check {}; zig test {} $(TRACE_FLAGS);'
+test-zig-test-files: $(ZIG_TEST_FILES)
+	@make ast-check
+	@echo "Running zig tests in parallel on $(ZIG_TEST_FILES)"
+	echo $(ZIG_TEST_FILES) | tr ' ' '\n' | parallel -j $(shell nproc) 'echo "Running zig test on {}"; zig ast-check {}; zig test {} $(TRACE_FLAGS) $(SUPPRESS_STDERR_FLAGS);'
 
 .PHONY: test
-test:
+test: $(ZIG_SRCS)
 	@date && echo $(UNAME_S)
 
 	# capture both stdout and stderr
-	zig test src/test_statements_and_state.zig $(TRACE_FLAGS) 2>&1 | head &
-	zig test src/test_expressions_evaluate.zig $(TRACE_FLAGS) 2>&1 | head &
-	zig test src/test_expressions_parse.zig    $(TRACE_FLAGS) 2>&1 | head &
-	zig test src/test_scanning.zig             $(TRACE_FLAGS) 2>&1 | head &
+	zig test src/test_statements_and_state.zig $(TRACE_FLAGS) 2>&1 # | head &
+	zig test src/test_expressions_evaluate.zig $(TRACE_FLAGS) 2>&1 # | head &
+	zig test src/test_expressions_parse.zig    $(TRACE_FLAGS) 2>&1 # | head &
+	zig test src/test_scanning.zig             $(TRACE_FLAGS) 2>&1 # | head &
+
 	wait
-
-.PHONY: watch-test
-watch-test:
-	@echo "Watching for changes..."
-	find src -name '*.zig' | entr -cr make -j4 test
-
-.PHONY: build-run
-build-run:
-	@date && echo $(UNAME_S)
-
-	make ast-check
-	zig build run --summary all
 
 #
 # COMMANDS
@@ -82,7 +94,7 @@ run:
 
 .PHONY: valgrind-tokenize valgrind-parse valgrind-evaluate valgrind-run
 
-# @for src in $(SRCS); do echo "Running ast-check on $$src"; zig ast-check $$src; done
+# @for src in $(ZIG_FILES); do echo "Running ast-check on $$src"; zig ast-check $$src; done
 pre-valgrind:
 	make ast-check
 	@echo "Building project from build.zig"
@@ -115,17 +127,20 @@ endef # or use `$(shell find src/examples -name '*.lox')`
 
 EXAMPLE_FILES := $(call generate_example_sources)
 
+# @printf "Running command 'run' on examples\n└─\x1b[37m$(EXAMPLE_FILES)\x1b[0m\n"
+# @$(foreach src,$(EXAMPLE_FILES), \
+# 	printf "\x1b[37mInterpreting file\n└─ $(src)\x1b[0m\n"; \
+# 	$(VALGRIND) $(EXE) run $(src) $(TRACE_FLAGS); \
+# )
 .PHONY: run-examples
-run-examples:
+run-examples: $(EXAMPLE_FILES)
 	make -j4 pre-valgrind
 	@printf "Running command 'run' on examples\n└─\x1b[37m$(EXAMPLE_FILES)\x1b[0m\n"
-	@$(foreach src,$(EXAMPLE_FILES), \
-		printf "\x1b[37mInterpreting file\n└─ $(src)\x1b[0m\n"; \
-		$(VALGRIND) $(EXE) run $(src) $(TRACE_FLAGS); \
-	)
+	: "NOTE: halt on error is disabled. e.g: " parallel -j $(shell nproc) --halt-on-error 1 'printf ...'
+	@echo $(EXAMPLE_FILES) | tr ' ' '\n' | parallel -j $(shell nproc) 'printf "\x1b[37mInterpreting file\n└─ {} \x1b[0m\n"; $(VALGRIND) $(EXE) run {} $(TRACE_FLAGS);'
+
 
 .PHONY: all
-
 
 
 # // Usage:
