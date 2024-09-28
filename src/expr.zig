@@ -4,6 +4,7 @@ const assert = std.debug.assert;
 const Interpreter = @import("interpreter.zig");
 const Token = @import("token.zig");
 const formatNumber = @import("root.zig").formatNumber;
+const logger = @import("logger.zig");
 
 pub const Expr = union(enum) {
     assign: Assign,
@@ -119,8 +120,10 @@ pub const Expr = union(enum) {
                 usize, i32, comptime_int => Value{ .num = @as(f64, @floatFromInt(x)) },
                 f64, comptime_float => Value{ .num = x },
                 void => Nil,
-                // *Obj => Value{ .obj = x },
-                else => unreachable,
+                else => |@"type"| {
+                    logger.err(.{}, @src(), "Unimplemented case for type {any}.", .{@"type"});
+                    @panic("Unimplemented");
+                },
             };
         }
 

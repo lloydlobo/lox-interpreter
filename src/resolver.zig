@@ -199,6 +199,16 @@ fn define(self: *Resolver, name: Token) Error!void {
     try self.getLastOrNullScopeStackPtr().?.put(name.lexeme, is_resolved);
 }
 
+// NOTE: This looks, for good reason, a lot like the code in Environment for
+// evaluating a variable. We start at the innermost scope and work outwards,
+// looking in each map for a matching name. If we find the variable, we resolve
+// it, passing in the number of scopes between the current innermost scope and
+// the scope where the variable was found. So, if the variable was found in the
+// current scope, we pass in 0. If it’s in the immediately enclosing scope, 1.
+// You get the idea.
+// If we walk through all of the block scopes and never find the variable, we
+// leave it unresolved and assume it’s global.
+//
 // TODO:
 //      In the resolver, allow unresolved variables to pass silently or log them
 //      when you're confident they should be global.
@@ -223,13 +233,27 @@ fn resolveLocal(self: *Resolver, expr: *Expr, name: Token) Error!void {
                 .{ logger.newline, expr, logger.newline, name, logger.newline, self.scopesSize(), 0 });
         }
     }
+    // FIXME: index should not be -1 unless `expr` is not in a scope, and a
+    // global!!!
+    //
+    //      beginScope.resolveLocal: resolver.zig:resolveLocal:228:27: info: [1] Now going to resolve local variable.
+    //          └─ [name: 'IDENTIFIER a null' at curr_stack_index: -1].
+    //      beginScope: resolver.zig:resolveExpr:386:49: info: Resolving variable initializer expression.
+    //          └─ [variable: 'IDENTIFIER a null'].
+    //      beginScope.resolveLocal: resolver.zig:resolveLocal:228:27: info: [1] Now going to resolve local variable.
+    //          └─ [name: 'IDENTIFIER a null' at curr_stack_index: -1].
 
     const scope_index = @as(i32, @intCast(self.scopesSize())) - 1;
-    logger.info(logscope, @src(), "[1] Now going to resolve local variable.{s}[name: '{any}' at curr_stack_index: {d}]. ", //
-        .{ logger.newline, name, scope_index });
+    if (scope_index < -1) {
+        logger.warn(logscope, @src(), "Unresolved local, assume it's global.{s}[{s}, {d}]", //
+            .{ logger.newline, name.lexeme, scope_index });
+    }
+    // logger.info(logscope, @src(), "[1] Now going to resolve local variable.{s}[name: '{any}' at curr_stack_index: {d}]. ", //
+    //     .{ logger.newline, name, scope_index });
 
     var i: i32 = scope_index;
 
+    // See https://craftinginterpreters.com/resolving-and-binding.html#resolving-variable-expressions
     while (i >= 0) : (i -= 1) {
         logger.info(logscope, @src(), "[2] ...and now resolving local variable.{s}[name: '{any}' at stack: {d} ]. ", //
             .{ logger.newline, name, i });
@@ -240,6 +264,7 @@ fn resolveLocal(self: *Resolver, expr: *Expr, name: Token) Error!void {
                 .{ logger.newline, name.lexeme });
 
             try self.interpreter.resolve(@constCast(expr), name, scope_index - i);
+
             assert(self.interpreter.simplocals.contains(name.lexeme)); // sanity check
             return;
         }

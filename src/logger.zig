@@ -27,7 +27,7 @@ pub fn log(
     // const root = @import("root.zig");
     // and !root.any(root.debug_trace_flags
     if (level == .info) {
-        return;
+        // return;
     }
 
     const stderr = std.io.getStdErr().writer();

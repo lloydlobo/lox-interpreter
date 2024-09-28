@@ -29,7 +29,7 @@ const root = @import("root.zig");
 ///
 /// * 20240927040854UTC
 ///   https://craftinginterpreters.com/resolving-and-binding.html#static-scope
-pub const g_is_stable_feature_flag = true;
+pub const g_is_stable_feature_flag = false;
 
 // Just use this to read, and not edit globally but from functions in `main.zig`.
 pub var g_had_runtime_error: bool = false;
@@ -140,7 +140,7 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
                 if (g_had_error) {
                     break :blk;
                 }
-                logger.info(.{}, @src(), "Locals count: {d}", .{interpreter.locals.count()});
+                logger.info(.{}, @src(), "Locals count: {d}", .{interpreter.simplocals.count()});
                 assert(interpreter.simplocals.count() > 0); // this can be 0 too, but oh well!
 
                 if (comptime debug.is_trace_interpreter) {
