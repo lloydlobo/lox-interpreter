@@ -10,11 +10,11 @@ const testing = std.testing;
 
 const Expr = @import("expr.zig").Expr;
 const Interpreter = @import("interpreter.zig");
-const logger = @import("logger.zig");
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
 const Value = @import("expr.zig").Expr.Value;
 const debug = @import("debug.zig");
+const logger = @import("logger.zig");
 const main = @import("main.zig");
 const root = @import("root.zig");
 
@@ -77,6 +77,7 @@ pub fn init(allocator: Allocator, interpreter: *Interpreter) Resolver {
 
 pub fn deinit(self: *Resolver) void {
     _ = self;
+
     std.log.warn("Tried to deinit unimplemented Resolver.deinit()", .{});
 }
 
@@ -100,25 +101,27 @@ pub fn handleTokenError(err: Error, token: Token, comptime fmt: []const u8) Allo
     };
 }
 
-fn scopesSize(self: *Resolver) usize {
+fn scopesSize(self: *const Resolver) usize {
     return self.scopes.items.len;
 }
 
-fn isEmptyScopeStack(self: *Resolver) bool {
-    return self.scopesSize() == 0;
+fn isEmptyScopeStack(self: *const Resolver) bool {
+    return (self.scopesSize() == 0);
 }
 
+// Since item is in scopes memory we return the pointer to it.
+// NOTE: can also use `&self.scopes.getLastOrNull()`
 fn getLastOrNullScopeStackPtr(self: *Resolver) ?*BlockScope {
-    // Since item is in scopes memory we return the pointer to it.
-    // NOTE: can also use `&self.scopes.getLastOrNull()`
-    return if (!self.isEmptyScopeStack())
-        &self.scopes.items[self.scopesSize() - 1]
-    else
-        null;
+    if (!self.isEmptyScopeStack()) {
+        return &self.scopes.items[self.scopesSize() - 1];
+    } else {
+        return null;
+    }
 }
 
 fn getLastScopeStackPtr(self: *Resolver) *BlockScope {
     assert(!self.isEmptyScopeStack());
+
     return self.getLastOrNullScopeStackPtr().?;
 }
 
@@ -130,23 +133,11 @@ fn beginScope(self: *Resolver) Allocator.Error!void {
 
     const scope = BlockScope.init(self.allocator);
     if (comptime debug.is_trace_resolver) {
-        logger.info(.{ .scope = loggerscoper_beginScope.scope }, @src(), "Pushing scope.{s}[prev_size: {d}]", //
-            .{ logger.newline, prev_size });
+        logger.info(.{ .scope = loggerscoper_beginScope.scope }, @src(),
+            \\Pushing scope.{s}[prev_size: {d}]
+        , .{ logger.newline, prev_size });
     }
-
     try self.scopes.append(scope);
-}
-
-fn describeScopeEntries(self: *Resolver) void {
-    for (self.scopes.items) |*scope| {
-        var it = scope.iterator();
-        while (it.next()) |entry| {
-            const name: []const u8 = entry.key_ptr.*;
-            logger.debug(.default, @src(), "Current scope entry '{s}'.", .{
-                name,
-            });
-        }
-    }
 }
 
 // endScope()
@@ -167,33 +158,33 @@ fn endScope(self: *Resolver) void {
     while (it.next()) |entry| {
         const is_used: bool = entry.value_ptr.*;
         const name: []const u8 = entry.key_ptr.*;
-        const is_not_used = (!is_used and !mem.startsWith(u8, name, "_") and
-            !mem.eql(u8, name, "this") and !mem.eql(u8, name, "super"));
+        const is_not_used = (!is_used and
+            !mem.startsWith(u8, name, "_") and
+            !mem.eql(u8, name, "this") and
+            !mem.eql(u8, name, "super"));
         if (is_not_used) {
             const token = undefined;
-            handleTokenError(Error.unused_variable, token, "Unused local variable. Start variable name with underscore if variable is unused") catch @panic("Unimplemented");
+            handleTokenError(
+                Error.unused_variable,
+                token,
+                "Unused local variable. Start variable name with underscore if variable is unused",
+            ) catch @panic("Unimplemented");
             @panic("Unimplemented");
         }
     }
 }
 
-// When we declare a variable in a local scope, we already know the names
-// of every variable previously declared in that same scope. If we see a
-// collision, we report an error.
 fn declare(self: *Resolver, name: Token) Allocator.Error!void {
     const scoper: logger.Scoper = .{ .scope = .{
         .name = @src().fn_name,
         .parent = if (self.current_function.isFn()) &loggerscoper_beginScope.scope else null,
     } };
 
-    // FIXME: How should we declare a function variable name if it is global.
-    // since, we return immediately?
-    if (self.isEmptyScopeStack()) {
-        logger.info(scoper, @src(), "Not a function type. Found empty stack.{s}[name: {any}]", //
-            .{ logger.newline, name });
+    if (self.isEmptyScopeStack()) { // FIXME: How should we declare a function variable name if it is global. since, we return immediately?
         assert(!self.current_function.isFn());
         return;
     }
+
     if (self.scopes.items[self.scopesSize() - 1].contains(name.lexeme)) {
         logger.err(scoper, @src(), "Already a variable with this name in this scope.{s}[name: {any} ]{s}[peeked scope item count: {d}]", //
             .{ logger.newline, name, logger.newline, self.scopes.items[self.scopesSize() - 1].count() });
@@ -201,16 +192,16 @@ fn declare(self: *Resolver, name: Token) Allocator.Error!void {
     }
 
     const is_resolved = false;
-    logger.info(scoper, @src(), "Declaring token...{s}[name: {any} ]{s}[peeked scope item count: {d}]", .{ logger.newline, name, logger.newline, self.scopes.items[self.scopesSize() - 1].count() });
-    try self.scopes.items[self.scopesSize() - 1].put(name.lexeme, is_resolved);
-    logger.info(scoper, @src(), "Token declared. {s}[peeked scope item count: {d}]", .{ logger.newline, self.scopes.items[self.scopesSize() - 1].count() });
+    try self.scopes.items[self.scopesSize() - 1].put(
+        name.lexeme,
+        is_resolved,
+    );
+
+    logger.info(scoper, @src(),
+        \\"Token declared. {s}[peeked scope item count: {d}]"
+    , .{ logger.newline, self.scopes.items[self.scopesSize() - 1].count() });
 }
 
-// After (`declare()`) declaring the variable, we resolve its initializer
-// expression in that same scope where the new variable now exists but is
-// unavailable.
-// Once the initializer expression is done, the variable is ready
-// for prime time. We do that by (`define()`) defining it.
 fn define(self: *Resolver, name: Token) Error!void {
     if (self.isEmptyScopeStack()) {
         return logger.info(.default, @src(), "Found empty stack.{s}[name: {any}]", .{ logger.newline, name });
@@ -220,43 +211,16 @@ fn define(self: *Resolver, name: Token) Error!void {
     try self.getLastOrNullScopeStackPtr().?.put(name.lexeme, is_resolved);
 }
 
-// NOTE: This looks, for good reason, a lot like the code in Environment for
-// evaluating a variable. We start at the innermost scope and work outwards,
-// looking in each map for a matching name. If we find the variable, we resolve
-// it, passing in the number of scopes between the current innermost scope and
-// the scope where the variable was found. So, if the variable was found in the
-// current scope, we pass in 0. If it’s in the immediately enclosing scope, 1.
-// You get the idea.
-// If we walk through all of the block scopes and never find the variable, we
-// leave it unresolved and assume it’s global.
-//
-// TODO:
-//      In the resolver, allow unresolved variables to pass silently or log them
-//      when you're confident they should be global.
-//      The interpreter (via lookupVariable) will handle unresolved variables at
-//      runtime, first checking locals, then globals.
-//
-//      Adjustments to the resolver:
-//
-//      You can check for the presence of a variable in global scope during the
-//      resolve phase but do not enforce an error for unresolved globals.
-//      Ensure that during interpretation, only unresolved local variables cause an
-//      error.
-
 fn resolveLocal(self: *Resolver, expr: *Expr, name: Token) Error!void {
     if (self.isEmptyScopeStack()) return; // expect local to be in global scope
     if (self.current_function.isFn()) assert(self.scopesSize() >= 1); // expect function to be scoped
+
     const scope_index = @as(i32, @intCast(self.scopesSize())) - 1;
     assert(scope_index >= 0); // expect beginScope() to be called before resolveLocal
-
-    // for (0..10) |i| {
-    //     root.print("{d}\n", .{i});
-    // }
 
     const scoper = logger.Scoper.makeScope(@src()).withParent(&loggerscoper_beginScope.scope);
 
     var i: i32 = scope_index;
-
     while (i >= 0) : (i -= 1) { // see https://craftinginterpreters.com/resolving-and-binding.html#resolving-variable-expressions
         logger.info(scoper, @src(),
             \\Resolving local variable.{s}name: '{any}' at scope index '{d}'..
@@ -281,19 +245,23 @@ fn resolveFunction(
     function: *const Stmt.Function,
     @"type": FunctionType,
 ) Error!void {
-    const enclosing_function = self.current_function;
+    const enclosing_function: FunctionType = self.current_function;
     self.current_function = @"type";
     defer self.current_function = enclosing_function;
 
-    const prev_size = self.scopesSize();
+    const prev_size: usize = self.scopesSize();
 
     try self.beginScope();
     assert(prev_size < self.scopesSize());
+
     for (function.parameters) |parameter| {
         try self.declare(parameter);
         try self.define(parameter);
     }
+
     try self.resolveStatements(function.body);
+
+    assert(self.scopesSize() >= 0);
     self.endScope();
 }
 
@@ -310,7 +278,9 @@ pub fn resolveStatements(self: *Resolver, statements: []const Stmt) Allocator.Er
 }
 
 pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
-    const logscope: logger.Scoper = .{ .scope = .{ .name = @src().fn_name } };
+    const logscope: logger.Scoper = .{ .scope = .{
+        .name = @src().fn_name,
+    } };
 
     switch (stmt.*) {
         .block => |statements| {
@@ -343,14 +313,17 @@ pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
         },
         .return_stmt => |return_stmt| {
             if (self.current_function == .none) {
-                return handleTokenError(Error.invalid_return, return_stmt.keyword, "Can't return from top level code.");
+                return handleTokenError(
+                    Error.invalid_return,
+                    return_stmt.keyword,
+                    "Can't return from top level code.",
+                );
             }
             if (return_stmt.value) |expr| {
                 try self.resolveExpr(expr);
             }
         },
         .var_stmt => |var_stmt| {
-
             // Resolving a variable declaration adds a new entry to the current
             // innermost scope’s map.
             try self.declare(var_stmt.name);
@@ -369,16 +342,10 @@ pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
 }
 
 pub fn resolveExpr(self: *Resolver, expr: *Expr) Error!void {
-    // FIXME:
-    //
-    // [declare] src/resolver.zig:declare:183:13: warn: Did not call beginScope(). Not a function type. Found empty stack.
-    // └─ [name: IDENTIFIER function null]
-    //
-    //
     switch (expr.*) {
         .assign => |assign| {
             try self.resolveExpr(assign.value);
-            // Resolve reference to other variables.
+            // This resolves reference to other variables.
             try self.resolveLocal(assign.value, assign.name);
         },
         .binary => |binary| {
@@ -387,8 +354,8 @@ pub fn resolveExpr(self: *Resolver, expr: *Expr) Error!void {
         },
         .call => |call| {
             try self.resolveExpr(call.callee);
-            for (call.arguments) |argument| {
-                try self.resolveExpr(argument);
+            for (call.arguments) |arg_expr| {
+                try self.resolveExpr(arg_expr);
             }
         },
         .grouping => |grouping| {
@@ -407,11 +374,16 @@ pub fn resolveExpr(self: *Resolver, expr: *Expr) Error!void {
             try self.resolveExpr(unary.right);
         },
         .variable => |variable| {
-            const name = variable.lexeme;
+            const name: []const u8 = variable.lexeme;
             if (!self.isEmptyScopeStack()) {
                 if (self.getLastScopeStackPtr().get(name)) |is_declared| {
-                    if (!is_declared) return handleTokenError(Error.undefined_variable, variable, //
-                        "Can't read local variable in its own initializer.");
+                    if (!is_declared) {
+                        return handleTokenError(
+                            Error.undefined_variable,
+                            variable,
+                            "Can't read local variable in its own initializer.",
+                        );
+                    }
                 }
             }
             logger.info(loggerscoper_beginScope, @src(), "Resolving variable initializer expression.{s}[variable: '{any}'].", //
@@ -427,11 +399,9 @@ pub fn resolveExpression(
     interpreter: *Interpreter,
     expr: *Expr,
 ) Error!std.AutoHashMap(*Expr, usize) {
-    const resolver: Resolver = try Resolver.init(
-        allocator,
-        interpreter,
-    );
+    const resolver: Resolver = try Resolver.init(allocator, interpreter);
     defer resolver.deinit();
+
     try resolver.resolveExpr(expr);
 
     return resolver.interpreter.locals;
@@ -619,12 +589,17 @@ test "stack" {
 // yet” by binding its name to false in the scope map. The value associated
 // with a key in the scope map represents whether or not we have finished
 // resolving that variable’s initializer.
+//
+// When we declare a variable in a local scope, we already know the names
+// of every variable previously declared in that same scope. If we see a
+// collision, we report an error.
 
 // define()
-// After declaring the variable, we resolve its initializer expression in that
-// same scope where the new variable now exists but is unavailable. Once the
-// initializer expression is done, the variable is ready for prime time. We do
-// that by defining it.
+// After (`declare()`) declaring the variable, we resolve its initializer
+// expression in that same scope where the new variable now exists but is
+// unavailable.
+// Once the initializer expression is done, the variable is ready
+// for prime time. We do that by (`define()`) defining it.
 
 // resolveLocal()
 // This looks, for good reason, a lot like the code in Environment for
@@ -672,413 +647,26 @@ test "stack" {
 // Interpreter—they turn around and apply the Visitor pattern to the given
 // syntax tree node.
 
+// resolveLocal()
+// NOTE: This looks, for good reason, a lot like the code in Environment for
+// evaluating a variable. We start at the innermost scope and work outwards,
+// looking in each map for a matching name. If we find the variable, we resolve
+// it, passing in the number of scopes between the current innermost scope and
+// the scope where the variable was found. So, if the variable was found in the
+// current scope, we pass in 0. If it’s in the immediately enclosing scope, 1.
+// You get the idea.
+// If we walk through all of the block scopes and never find the variable, we
+// leave it unresolved and assume it’s global.
 //
-// Archive
+// TODO:
+//      In the resolver, allow unresolved variables to pass silently or log them
+//      when you're confident they should be global.
+//      The interpreter (via lookupVariable) will handle unresolved variables at
+//      runtime, first checking locals, then globals.
 //
-
-// const ResolveError = error{
-//     variable_already_declared,
-//     undefined_variable,
-//     InvalidThis,
-//     InvalidSuper,
-//     invalid_return,
-//     InvalidBreak,
-//     SelfInheritance,
-// };
+//      Adjustments to the resolver:
 //
-// const FunctionType = enum {
-//     None,
-//     Function,
-//     Initializer,
-//     Method,
-// };
-//
-// const ClassType = enum {
-//     None,
-//     Class,
-//     Subclass,
-// };
-//
-// const Resolver = struct {
-//     allocator: *Allocator,
-//     scopes: ArrayList(StringHashMap(bool)),
-//     locals: StringHashMap(usize),
-//     current_function: FunctionType,
-//     current_class: ClassType,
-//     loop_depth: usize,
-//
-//     pub fn init(allocator: *Allocator) Resolver {
-//         return .{
-//             .allocator = allocator,
-//             .scopes = ArrayList(StringHashMap(bool)).init(allocator),
-//             .locals = StringHashMap(usize).init(allocator),
-//             .current_function = .None,
-//             .current_class = .None,
-//             .loop_depth = 0,
-//         };
-//     }
-//
-//     pub fn deinit(self: *Resolver) void {
-//         for (self.scopes.items) |*scope| {
-//             scope.deinit();
-//         }
-//         self.scopes.deinit();
-//         self.locals.deinit();
-//     }
-//
-//     fn beginScope(self: *Resolver) !void {
-//         try self.scopes.append(StringHashMap(bool).init(self.allocator));
-//     }
-//
-//     fn endScope(self: *Resolver) void {
-//         const scope = self.scopes.pop();
-//         var it = scope.iterator();
-//         while (it.next()) |entry| {
-//             const name = entry.key_ptr.*;
-//             const used = entry.value_ptr.*;
-//             if (!used and !std.mem.startsWith(u8, name, "_") and !std.mem.eql(u8, name, "this") and !std.mem.eql(u8, name, "super")) {
-//                 std.debug.print("Warning: Unused local variable '{}'. Start variable name with underscore if variable is unused.\n", .{name});
-//             }
-//         }
-//         scope.deinit();
-//     }
-//
-//     fn declare(self: *Resolver, name: []const u8) !void {
-//         if (self.scopes.items.len == 0) return;
-//         var scope = &self.scopes.items[self.scopes.items.len - 1];
-//         if (scope.contains(name)) {
-//             return ResolveError.variable_already_declared;
-//         }
-//         try scope.put(name, false);
-//     }
-//
-//     fn define(self: *Resolver, name: []const u8) !void {
-//         if (self.scopes.items.len == 0) return;
-//         var scope = &self.scopes.items[self.scopes.items.len - 1];
-//         try scope.put(name, true);
-//     }
-//
-//     fn resolveLocal(self: *Resolver, expr: *const Expr, name: []const u8) !void {
-//         var i: usize = self.scopes.items.len;
-//         while (i > 0) : (i -= 1) {
-//             if (self.scopes.items[i - 1].contains(name)) {
-//                 try self.locals.put(@ptrToInt(expr), self.scopes.items.len - i);
-//                 return;
-//             }
-//         }
-//     }
-//
-//     fn resolveFunction(self: *Resolver, func: *const Function, type: FunctionType) !void {
-//         const enclosing_function = self.current_function;
-//         self.current_function = type;
-//
-//         try self.beginScope();
-//         for (func.params) |param| {
-//             try self.declare(param.name);
-//             try self.define(param.name);
-//         }
-//         try self.resolveStatements(func.body);
-//         self.endScope();
-//
-//         self.current_function = enclosing_function;
-//     }
-//
-//     pub fn resolveStatements(self: *Resolver, statements: []const Stmt) !void {
-//         for (statements) |stmt| {
-//             try self.resolveStatement(stmt);
-//         }
-//     }
-//
-//     pub fn resolveStatement(self: *Resolver, stmt: Stmt) !void {
-//         switch (stmt) {
-//             .Block => |block| {
-//                 try self.beginScope();
-//                 try self.resolveStatements(block.statements);
-//                 self.endScope();
-//             },
-//             .Var => |var_stmt| {
-//                 try self.declare(var_stmt.name.lexeme);
-//                 if (var_stmt.initializer) |initializer| {
-//                     try self.resolveExpr(initializer);
-//                 }
-//                 try self.define(var_stmt.name.lexeme);
-//             },
-//             .Function => |func| {
-//                 try self.declare(func.name.lexeme);
-//                 try self.define(func.name.lexeme);
-//                 try self.resolveFunction(func, .Function);
-//             },
-//             .Expression => |expr| {
-//                 try self.resolveExpr(expr.expression);
-//             },
-//             .If => |if_stmt| {
-//                 try self.resolveExpr(if_stmt.condition);
-//                 try self.resolveStatement(if_stmt.then_branch);
-//                 if (if_stmt.else_branch) |else_branch| {
-//                     try self.resolveStatement(else_branch);
-//                 }
-//             },
-//             .Print => |print_stmt| {
-//                 try self.resolveExpr(print_stmt.expression);
-//             },
-//             .Return => |return_stmt| {
-//                 if (self.current_function == .None) {
-//                     return ResolveError.invalid_return;
-//                 }
-//                 if (return_stmt.value) |value| {
-//                     if (self.current_function == .Initializer) {
-//                         return ResolveError.invalid_return;
-//                     }
-//                     try self.resolveExpr(value);
-//                 }
-//             },
-//             .While => |while_stmt| {
-//                 try self.resolveExpr(while_stmt.condition);
-//                 self.loop_depth += 1;
-//                 try self.resolveStatement(while_stmt.body);
-//                 self.loop_depth -= 1;
-//             },
-//             .Break => {
-//                 if (self.loop_depth == 0) {
-//                     return ResolveError.InvalidBreak;
-//                 }
-//             },
-//             .Class => |class_stmt| {
-//                 const enclosing_class = self.current_class;
-//                 self.current_class = .Class;
-//
-//                 try self.declare(class_stmt.name.lexeme);
-//                 try self.define(class_stmt.name.lexeme);
-//
-//                 if (class_stmt.superclass) |superclass| {
-//                     if (std.mem.eql(u8, class_stmt.name.lexeme, superclass.name.lexeme)) {
-//                         return ResolveError.SelfInheritance;
-//                     }
-//                     self.current_class = .Subclass;
-//                     try self.resolveExpr(superclass);
-//                     try self.beginScope();
-//                     try self.scopes.items[self.scopes.items.len - 1].put("super", true);
-//                 }
-//
-//                 try self.beginScope();
-//                 try self.scopes.items[self.scopes.items.len - 1].put("this", true);
-//
-//                 for (class_stmt.methods) |method| {
-//                     const declaration = if (std.mem.eql(u8, method.name.lexeme, "init")) FunctionType.Initializer else FunctionType.Method;
-//                     try self.resolveFunction(method, declaration);
-//                 }
-//
-//                 self.endScope();
-//
-//                 if (class_stmt.superclass != null) self.endScope();
-//
-//                 self.current_class = enclosing_class;
-//             },
-//         }
-//     }
-//
-//     pub fn resolveExpr(self: *Resolver, expr: Expr) !void {
-//         switch (expr) {
-//             .Variable => |var| {
-//                 if (self.scopes.items.len > 0) {
-//                     const scope = &self.scopes.items[self.scopes.items.len - 1];
-//                     if (scope.get(var.name.lexeme)) |declared| {
-//                         if (!declared) {
-//                             return ResolveError.undefined_variable;
-//                         }
-//                     }
-//                 }
-//                 try self.resolveLocal(expr, var.name.lexeme);
-//             },
-//             .Assign => |assign| {
-//                 try self.resolveExpr(assign.value);
-//                 try self.resolveLocal(expr, assign.name.lexeme);
-//             },
-//             .Binary => |binary| {
-//                 try self.resolveExpr(binary.left);
-//                 try self.resolveExpr(binary.right);
-//             },
-//             .Call => |call| {
-//                 try self.resolveExpr(call.callee);
-//                 for (call.arguments) |argument| {
-//                     try self.resolveExpr(argument);
-//                 }
-//             },
-//             .Get => |get| {
-//                 try self.resolveExpr(get.object);
-//             },
-//             .Grouping => |grouping| {
-//                 try self.resolveExpr(grouping.expression);
-//             },
-//             .Literal => {},
-//             .Logical => |logical| {
-//                 try self.resolveExpr(logical.left);
-//                 try self.resolveExpr(logical.right);
-//             },
-//             .Set => |set| {
-//                 try self.resolveExpr(set.value);
-//                 try self.resolveExpr(set.object);
-//             },
-//             .Super => |super| {
-//                 if (self.current_class == .None) {
-//                     return ResolveError.InvalidSuper;
-//                 } else if (self.current_class != .Subclass) {
-//                     return ResolveError.InvalidSuper;
-//                 }
-//                 try self.resolveLocal(expr, "super");
-//             },
-//             .This => |this| {
-//                 if (self.current_class == .None) {
-//                     return ResolveError.InvalidThis;
-//                 }
-//                 try self.resolveLocal(expr, "this");
-//             },
-//             .Unary => |unary| {
-//                 try self.resolveExpr(unary.right);
-//             },
-//         }
-//     };
-//
-//     pub fn resolveExpr(allocator: *Allocator, expr: Expr) !StringHashMap(usize) {
-//         var resolver = Resolver.init(allocator);
-//         defer resolver.deinit();
-//
-//         try resolver.resolveExpr(expr);
-//         return resolver.locals;
-//     }
-
-//
-//
-// TESTS
-//
-//
-
-// //const std = @import("std");
-// const testing = std.testing;
-// const Allocator = std.mem.Allocator;
-//
-// const Resolver = @import("resolver.zig");
-// const Expr = @import("expr.zig").Expr;
-// const Stmt = @import("stmt.zig").Stmt;
-// const Token = @import("token.zig").Token;
-// const Interpreter = @import("interpreter.zig");
-// const Value = @import("value.zig").Value;
-// const main = @import("main.zig");
-//
-// fn TestContext(comptime T: type) type {
-//     return struct {
-//         const Self = @This();
-//
-//         allocator: Allocator,
-//         arena: std.heap.ArenaAllocator,
-//         interpreter: Interpreter,
-//         resolver: Resolver,
-//         statements: std.ArrayList(Stmt),
-//
-//         fn init() !Self {
-//             var arena = std.heap.ArenaAllocator.init(testing.allocator);
-//             const allocator = arena.allocator();
-//             var interpreter = try Interpreter.init(allocator);
-//             var resolver = Resolver.init(allocator, &interpreter);
-//
-//             return Self{
-//                 .allocator = allocator,
-//                 .arena = arena,
-//                 .interpreter = interpreter,
-//                 .resolver = resolver,
-//                 .statements = std.ArrayList(Stmt).init(allocator),
-//             };
-//         }
-//
-//         fn deinit(self: *Self) void {
-//             self.statements.deinit();
-//             self.arena.deinit();
-//         }
-//
-//         fn addStatement(self: *Self, stmt: Stmt) !void {
-//             try self.statements.append(stmt);
-//         }
-//
-//         fn resolve(self: *Self) !void {
-//             try self.resolver.resolveStatements(try self.statements.toOwnedSlice());
-//         }
-//     };
-// }
-//
-// test "Resolver - Variable Declaration and Usage" {
-//     var ctx = try TestContext(Resolver).init();
-//     defer ctx.deinit();
-//     // Test variable declaration
-//     try ctx.addStatement(.{
-//         .var_stmt = .{
-//             .name = Token.make("x", 1, .{ .str = "x" }, .identifier),
-//             .initializer = null,
-//         },
-//     });
-//     // Test variable usage
-//     const var_expr = &Expr{ .variable = Token.make("x", 2, .{ .str = "x" }, .identifier) };
-//     try ctx.addStatement(.{ .expr_stmt = var_expr });
-//     try ctx.resolve();
-//     // Assert that the variable was properly resolved
-//     try testing.expect(ctx.interpreter.locals.contains(var_expr));
-// }
-//
-// test "Resolver - Scope Handling" {
-//     var ctx = try TestContext(Resolver).init();
-//     defer ctx.deinit();
-//     try ctx.resolver.beginScope();
-//     // Declare a variable in the inner scope
-//     try ctx.addStatement(.{
-//         .var_stmt = .{
-//             .name = Token.make("y", 1, .{ .str = "y" }, .identifier),
-//             .initializer = null,
-//         },
-//     });
-//     ctx.resolver.endScope();
-//     // Try to use the variable after its scope has ended
-//     const var_expr = &Expr{ .variable = Token.make("y", 2, .{ .str = "y" }, .identifier) };
-//     try ctx.addStatement(.{ .expr_stmt = var_expr });
-//     try testing.expectError(Resolver.Error.undefined_variable, ctx.resolve());
-// }
-//
-// test "Resolver - Function Declaration and Return" {
-//     var ctx = try TestContext(Resolver).init();
-//     defer ctx.deinit();
-//     // Declare a function
-//     try ctx.addStatement(.{
-//         .function = .{
-//             .name = Token.make("testFunc", 1, .{ .str = "testFunc" }, .identifier),
-//             .parameters = &[_]Token{},
-//             .body = &[_]Stmt{
-//                 .{ .return_stmt = .{
-//                     .value = @constCast(&Expr{ .literal = Value.Nil }),
-//                     .keyword = Token.make("return", 2, .{ .str = "return" }, .identifier),
-//                 } },
-//             },
-//         },
-//     });
-//     try ctx.resolve();
-//     // No error should occur for a valid return inside a function
-//     try testing.expect(!main.g_had_error);
-// }
-//
-// test "Resolver - Invalid Top-Level Return" {
-//     var ctx = try TestContext(Resolver).init();
-//     defer ctx.deinit();
-//     // Add a top-level return statement (which is invalid)
-//     try ctx.addStatement(.{
-//         .return_stmt = .{
-//             .value = @constCast(&Expr{ .literal = Value.Nil }),
-//             .keyword = Token.make("return", 1, .{ .str = "return" }, .identifier),
-//         },
-//     });
-//     try ctx.resolve();
-//     // Check error flags
-//     try testing.expect(main.g_had_error);
-//     try testing.expect(!main.g_had_runtime_error);
-//     try testing.expect(main.g_error_count == 1);
-//     // Check runtime values
-//     try testing.expectEqualStrings("BANG  null", try std.fmt.allocPrint(ctx.allocator, "{any}", .{Interpreter.runtime_token}));
-//     try testing.expectEqualStrings("false", try std.fmt.allocPrint(ctx.allocator, "{any}", .{Interpreter.runtime_return_value}));
-//     try testing.expectEqualStrings("error.", try std.fmt.allocPrint(ctx.allocator, "{any}", .{Interpreter.runtime_error}));
-// }
+//      You can check for the presence of a variable in global scope during the
+//      resolve phase but do not enforce an error for unresolved globals.
+//      Ensure that during interpretation, only unresolved local variables cause an
+//      error.

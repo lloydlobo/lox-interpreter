@@ -1,13 +1,14 @@
 const std = @import("std");
-const assert = std.debug.assert;
 const testing = std.testing;
+const assert = std.debug.assert;
 const SourceLocation = std.builtin.SourceLocation;
 
 const Logger = @This();
 
 const with_vertical_padding = false;
-const v_pad = if (with_vertical_padding) "\n" else "";
 const with_horizontal_padding = true;
+
+const v_pad = if (with_vertical_padding) "\n" else "";
 const h_pad = if (with_horizontal_padding) "    " else "";
 
 pub const color_reset = "\x1b[0m";
@@ -43,12 +44,7 @@ pub const Scope = struct {
     name: []const u8 = "default",
     parent: ?*const Scope = null,
 
-    pub fn format(
-        self: Scope,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
+    pub fn format(self: Scope, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = options;
         _ = fmt;
         if (self.parent) |parent| {
@@ -70,6 +66,7 @@ pub const Scoper = union(enum) {
             .parent = null,
         } };
     }
+
     pub fn withParent(self: Scoper, parent: *const Scope) Scoper {
         assert(self.scope.name.len > 0);
         return .{ .scope = .{
@@ -102,11 +99,12 @@ pub fn log(
     args: anytype,
 ) void {
     // if debugging then comment me.
-    // {
-    //     const is_skip_logging = level == LogLevel.info;
-    //     if (comptime is_skip_logging) return;
-    // }
-
+    {
+        const is_skip_logging = (level == LogLevel.info);
+        if (comptime is_skip_logging) {
+            return;
+        }
+    }
     const stderr = std.io.getStdErr().writer();
 
     // Strip the "src/" prefix from the source file path if it exists
