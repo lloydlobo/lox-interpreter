@@ -1,4 +1,6 @@
 const std = @import("std");
+const assert = std.debug.assert;
+const testing = std.testing;
 const SourceLocation = std.builtin.SourceLocation;
 
 const Logger = @This();
@@ -16,79 +18,6 @@ pub const color_red = "\x1b[31m";
 const glyph_color = color_white;
 
 pub const newline = "\n" ++ color_reset ++ "\t" ++ glyph_color ++ "└─ " ++ color_reset;
-
-pub fn log(
-    comptime level: LogLevel,
-    scope: Scope,
-    comptime src: SourceLocation,
-    comptime format: []const u8,
-    args: anytype,
-) void {
-    if (comptime level == .info) {
-        return; // skip logging `LogLevel.info`
-    }
-
-    const stderr = std.io.getStdErr().writer();
-
-    // Strip the "src/" prefix from the source file path if it exists
-    const stripped_file = if (std.mem.startsWith(u8, src.file, "src/"))
-        src.file[4..]
-    else
-        src.file;
-
-    // Buffer to capture the fully formatted scope (including parent scopes)
-    var scope_buffer: [256]u8 = undefined;
-    var scope_stream = std.io.fixedBufferStream(&scope_buffer);
-    const scope_writer = scope_stream.writer();
-
-    // Format the scope into the buffer
-    scope.format("", .{}, scope_writer) catch unreachable;
-
-    // Write the full log message
-    stderr.print(
-        v_pad ++
-            h_pad ++
-            "{s}{s}{s}{s}{s}: {s}:{s}{s}:{d}{s}:{d}:{s} {s}{s}:{s}{s} " ++
-            format ++
-            color_reset ++
-            "\n" ++
-            v_pad,
-        .{
-            glyph_color,
-            color_white,
-            scope_buffer[0 .. scope_writer.context.getPos() catch unreachable],
-            glyph_color,
-            color_reset,
-            stripped_file,
-            color_white,
-            src.fn_name,
-            src.line,
-            color_white,
-            src.column,
-            color_bold,
-            level.getColor(),
-            level.getName(),
-            color_reset,
-            color_bold,
-        } ++ args,
-    ) catch unreachable;
-}
-
-pub fn debug(scope: Scope, comptime src: SourceLocation, comptime format: []const u8, args: anytype) void {
-    log(.debug, scope, src, format, args);
-}
-
-pub fn info(scope: Scope, comptime src: SourceLocation, comptime format: []const u8, args: anytype) void {
-    log(.info, scope, src, format, args);
-}
-
-pub fn warn(scope: Scope, comptime src: SourceLocation, comptime format: []const u8, args: anytype) void {
-    log(.warn, scope, src, format, args);
-}
-
-pub fn err(scope: Scope, comptime src: SourceLocation, comptime format: []const u8, args: anytype) void {
-    log(.err, scope, src, format, args);
-}
 
 pub const LogLevel = enum {
     debug,
@@ -130,6 +59,116 @@ pub const Scope = struct {
         }
     }
 };
+
+pub const Scoper = union(enum) {
+    default,
+    scope: Scope,
+
+    pub fn makeScope(comptime src: std.builtin.SourceLocation) Scoper {
+        return comptime .{ .scope = .{
+            .name = src.fn_name,
+            .parent = null,
+        } };
+    }
+    pub fn withParent(self: Scoper, parent: *const Scope) Scoper {
+        assert(self.scope.name.len > 0);
+        return .{ .scope = .{
+            .name = self.scope.name,
+            .parent = parent,
+        } };
+    }
+
+    pub fn toScope(self: Scoper) Scope {
+        return switch (self) {
+            .default => Scope{ .name = "default", .parent = null },
+            .scope => |scope| scope,
+        };
+    }
+};
+
+test "Scoper" {
+    try testing.expectEqual(Scoper.default, .default);
+    try testing.expectEqual(
+        Scoper{ .scope = .{ .name = "default", .parent = null } },
+        Scoper{ .scope = .{ .name = "default", .parent = null } },
+    );
+}
+
+pub fn log(
+    comptime level: LogLevel,
+    scoper: Scoper,
+    comptime src: SourceLocation,
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    // if debugging then comment me.
+    // {
+    //     const is_skip_logging = level == LogLevel.info;
+    //     if (comptime is_skip_logging) return;
+    // }
+
+    const stderr = std.io.getStdErr().writer();
+
+    // Strip the "src/" prefix from the source file path if it exists
+    const stripped_file = if (std.mem.startsWith(u8, src.file, "src/"))
+        src.file[4..]
+    else
+        src.file;
+
+    // Buffer to capture the fully formatted scope (including parent scopes)
+    var scope_buffer: [256]u8 = undefined;
+    var scope_stream = std.io.fixedBufferStream(&scope_buffer);
+    const scope_writer = scope_stream.writer();
+
+    const scope: Scope = scoper.toScope();
+    // Format the scope into the buffer
+    scope.format("", .{}, scope_writer) catch unreachable;
+
+    // Write the full log message
+    stderr.print(
+        v_pad ++
+            h_pad ++
+            "{s}{s}{s}{s}{s}: {s}:{s}{s}:{d}{s}:{d}:{s} {s}{s}:{s}{s} " ++
+            format ++
+            color_reset ++
+            "\n" ++
+            v_pad,
+        .{
+            glyph_color,
+            color_white,
+            scope_buffer[0 .. scope_writer.context.getPos() catch unreachable],
+            glyph_color,
+            color_reset,
+            stripped_file,
+            color_white,
+            src.fn_name,
+            src.line,
+            color_white,
+            src.column,
+            color_bold,
+            level.getColor(),
+            level.getName(),
+            color_reset,
+            color_bold,
+        } ++ args,
+    ) catch unreachable;
+}
+
+pub fn debug(scoper: Scoper, comptime src: SourceLocation, comptime format: []const u8, args: anytype) void {
+    log(.debug, scoper, src, format, args);
+}
+
+pub fn info(scoper: Scoper, comptime src: SourceLocation, comptime format: []const u8, args: anytype) void {
+    log(.info, scoper, src, format, args);
+}
+
+pub fn warn(scoper: Scoper, comptime src: SourceLocation, comptime format: []const u8, args: anytype) void {
+    log(.warn, scoper, src, format, args);
+}
+
+pub fn err(scoper: Scoper, comptime src: SourceLocation, comptime format: []const u8, args: anytype) void {
+    log(.err, scoper, src, format, args);
+}
 
 test "basic usage" {
     const root_scope = Scope{ .name = "app" };

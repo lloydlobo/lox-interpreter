@@ -1,5 +1,8 @@
 print "file: test.lox";
 
+// Invalid return errors
+// return "at top level";
+
 27 - 60 >= -99 * 2 / 99 + 76;
 
 // `clock()` is a global function baked in, just like `print()` is.
@@ -23,6 +26,21 @@ var a = "first";
 }
 a = "third";
 print a; //> third
+{
+    // [line 30] Error at 'a': Can't read local variable in its own initializer.
+    // How do other languages you know handle local variables that refer to the
+    // same name in their initializer, like:
+    //
+    // Is it a runtime error? Compile error? Allowed? Do they treat global
+    // variables differently? Do you agree with their choices? Justify your
+    // answer.
+    // var a = a;
+}
+
+// TODO: Extend the resolver to report an error if a local variable is never used.
+{ 
+    var unused_variable_foo = 1;
+}
 
 
 fun global_function() {
@@ -54,6 +72,27 @@ fun foo_function() {
 }
 
 foo_function();
+
+print "Ancestor environment traversal";
+{
+    var a_1 = 1;
+    var a_2 = 2;
+
+    {
+        var b_1 = 3;
+        var b_2 = 4;
+
+        {
+
+            print a_1;
+
+            {
+                print b_2;
+            }
+
+        }
+    }
+}
 
 
 // see `:h modeline`
