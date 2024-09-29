@@ -11,12 +11,11 @@ const Token = @import("token.zig");
 // See also https://craftinginterpreters.com/scanning.html#recognizing-lexemes
 
 pub const Scanner = struct {
-    source: []const u8,
-    tokens: std.ArrayList(Token),
-
-    start: usize = 0,
     current: usize = 0,
     line: u32 = 1,
+    source: []const u8,
+    start: usize = 0,
+    tokens: std.ArrayList(Token),
 
     pub const keywords = std.StaticStringMap(Token.Type).initComptime(.{
         .{ "and", .@"and" },
@@ -66,6 +65,7 @@ pub const Scanner = struct {
 
     fn scanToken(self: *Scanner) !void {
         const c: u8 = self.advance();
+
         switch (c) {
             '(' => try self.addToken(.left_paren), // 40
             ')' => try self.addToken(.right_paren), // 41
@@ -81,8 +81,9 @@ pub const Scanner = struct {
             '*' => try self.addToken(.star), // 42
             '/' => { //47
                 if (self.match('/')) { // comment goes until line end
-                    while ((self.peek() != '\n') and !self.isAtEnd())
+                    while ((self.peek() != '\n') and !self.isAtEnd()) {
                         _ = self.advance();
+                    }
                 } else {
                     try self.addToken(.slash);
                 }
@@ -106,36 +107,44 @@ pub const Scanner = struct {
     }
 
     fn identifier(self: *Scanner) !void {
-        while (root.isAlphaNumeric(self.peek()))
+        while (root.isAlphaNumeric(self.peek())) {
             _ = self.advance();
+        }
 
-        const @"type" = if (keywords.get(self.source[self.start..self.current])) |@"type"|
-            @"type"
-        else
-            .identifier;
+        const t_type: Token.Type = blk: {
+            if (keywords.get(self.source[self.start..self.current])) |@"type"| {
+                break :blk @"type";
+            } else {
+                break :blk .identifier;
+            }
+        };
 
-        try self.addToken(@"type");
+        try self.addToken(t_type);
     }
 
     fn number(self: *Scanner) !void {
-        while (std.ascii.isDigit(self.peek()))
+        while (std.ascii.isDigit(self.peek())) {
             _ = self.advance();
-
+        }
         if (self.peek() == '.' and std.ascii.isDigit(self.peekNext())) {
             _ = self.advance(); //consume the `.`
-
-            while (std.ascii.isDigit(self.peek()))
+            while (std.ascii.isDigit(self.peek())) {
                 _ = self.advance();
+            }
         }
 
-        const num = try std.fmt.parseFloat(f64, self.source[self.start..self.current]);
+        const num = try std.fmt.parseFloat(
+            f64,
+            self.source[self.start..self.current],
+        );
         try self.addTokenValue(.number, .{ .num = num });
     }
 
     fn string(self: *Scanner) !void {
         while ((self.peek() != '"') and !self.isAtEnd()) {
-            if (self.peek() == '\n')
+            if (self.peek() == '\n') {
                 self.line += 1;
+            }
             _ = self.advance();
         }
         if (self.isAtEnd()) {
@@ -152,30 +161,35 @@ pub const Scanner = struct {
     /// Similar to a conditional lookahead `advance()`. We only consume the
     /// current character if it’s what we’re looking for.
     fn match(self: *Scanner, expected: u8) bool {
-        if (self.isAtEnd())
+        if (self.isAtEnd()) {
             return false;
-        if ((self.source[self.current] != expected))
+        }
+        if ((self.source[self.current] != expected)) {
             return false;
-
+        }
         self.current += 1;
 
         return true;
     }
 
+    fn isAtEnd(self: *Scanner) bool {
+        return (self.current >= self.source.len);
+    }
+
     fn peek(self: *Scanner) u8 {
-        return if (self.isAtEnd()) 0 else self.source[self.current];
+        if (self.isAtEnd()) {
+            return 0;
+        } else {
+            return self.source[self.current];
+        }
     }
 
     fn peekNext(self: *Scanner) u8 {
-        // return if (self.isAtEnd()) 0 else self.source[self.current + 1];
-        return if ((self.current + 1) >= self.source.len)
-            0
-        else
-            self.source[self.current + 1];
-    }
-
-    fn isAtEnd(self: *Scanner) bool {
-        return self.current >= self.source.len;
+        if ((self.current + 1) >= self.source.len) {
+            return 0;
+        } else {
+            return self.source[self.current + 1];
+        }
     }
 
     fn advance(self: *Scanner) u8 {
@@ -191,11 +205,12 @@ pub const Scanner = struct {
     fn addTokenValue(self: *Scanner, @"type": Token.Type, value: ?Token.Literal) !void {
         assert(self.start <= self.current);
         assert(self.line >= 1); // sanity check
+
         try self.tokens.append(.{
-            .type = @"type",
             .lexeme = self.source[self.start..self.current],
-            .literal = value,
             .line = self.line,
+            .literal = value,
+            .type = @"type",
         });
     }
 };

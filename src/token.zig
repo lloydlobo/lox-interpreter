@@ -1,13 +1,14 @@
 const std = @import("std");
-const assert = std.debug.assert;
 const testing = std.testing;
+const assert = std.debug.assert;
+const FormatOptions = std.fmt.FormatOptions;
 
 const formatNumber = @import("root.zig").formatNumber;
 
 const Token = @This();
 
 lexeme: []const u8,
-line: u32, // Default: 1
+line: u32, // Initial is 1.
 literal: ?Literal,
 type: Type,
 
@@ -99,13 +100,13 @@ pub const Type = enum {
 };
 
 pub const Literal = union(enum) {
-    str: []const u8,
     num: f64,
+    str: []const u8,
 
-    pub fn format(self: Literal, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: Literal, comptime _: []const u8, _: FormatOptions, writer: anytype) !void {
         switch (self) {
-            .str => |str| try std.fmt.format(writer, "{s}", .{str}),
             .num => |num| try formatNumber(writer, num),
+            .str => |str| try std.fmt.format(writer, "{s}", .{str}),
         }
     }
 };

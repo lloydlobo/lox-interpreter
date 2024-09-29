@@ -66,9 +66,10 @@ fun foo_function() {
 
     fun bar_function() {
         print "in bar_function.. that is inside foo_function";
+        return nil;
     }
 
-    bar_function();
+    print(bar_function());
 }
 
 foo_function();

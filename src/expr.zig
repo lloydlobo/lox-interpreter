@@ -45,25 +45,6 @@ pub const Expr = union(enum) {
         right: *Expr,
     };
 
-    pub const LoxReturnValue = union(enum) {
-        nil: void,
-        ret: Value,
-
-        pub fn fromValue(value: ?Value) LoxReturnValue {
-            return if (value) |v| switch (v) {
-                .nil => .{ .ret = Value.Nil },
-                else => |x| .{ .ret = x },
-            } else .{ .ret = Value.Nil };
-        }
-
-        pub fn toValue(self: *LoxReturnValue) Value {
-            return switch (self.*) {
-                .nil => Value.Nil,
-                .ret => |x| x,
-            };
-        }
-    };
-
     pub const Value = union(enum) {
         bool: bool,
         callable: *LoxCallable,
@@ -148,6 +129,25 @@ pub const Expr = union(enum) {
                 .ret => |lox_return_value_ptr| try std.fmt.format(writer, "{any}", .{lox_return_value_ptr}),
                 .str => |@"[]const u8"| try std.fmt.format(writer, "{s}", .{@"[]const u8"}),
             }
+        }
+    };
+
+    pub const LoxReturnValue = union(enum) {
+        nil: void,
+        ret: Value,
+
+        pub fn fromValue(value: ?Value) LoxReturnValue {
+            return if (value) |v| switch (v) {
+                .nil => .{ .ret = Value.Nil },
+                else => |x| .{ .ret = x },
+            } else .{ .ret = Value.Nil };
+        }
+
+        pub fn toValue(self: *LoxReturnValue) Value {
+            return switch (self.*) {
+                .nil => Value.Nil,
+                .ret => |x| x,
+            };
         }
     };
 

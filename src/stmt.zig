@@ -7,6 +7,7 @@ const FormatOptions = fmt.FormatOptions;
 const Expr = @import("expr.zig").Expr;
 const Token = @import("token.zig");
 const debug = @import("debug.zig");
+const logger = @import("logger.zig");
 
 /// `statement → block | break_stmt | expr_stmt | for_stmt | if_stmt | print_stmt | var_stmt | while_stmt  ;`
 pub const Stmt = union(enum) {
@@ -21,11 +22,6 @@ pub const Stmt = union(enum) {
     var_stmt: Var,
     while_stmt: While,
 
-    /// Converts union value to a string literal representing the name.
-    pub fn toString(self: Stmt) []const u8 {
-        return @tagName(self);
-    }
-
     pub const Function = struct { // should implement Callable
         body: []Stmt, // allocate separately?
         name: Token,
@@ -34,8 +30,9 @@ pub const Stmt = union(enum) {
         pub fn create(allocator: Allocator) !*Function {
             const self = try allocator.create(Function);
             errdefer allocator.destroy(self);
+
             if (comptime debug.is_trace_garbage_collector)
-                std.log.debug("{} allocate {} for {s}", .{
+                logger.debug(.default, @src(), "{} allocate {} for {s}", .{
                     @intFromPtr(&self),
                     @sizeOf(Function),
                     @typeName(Function),
@@ -46,11 +43,11 @@ pub const Stmt = union(enum) {
     };
 
     /// "If  : Expr condition, Stmt thenBranch," + " Stmt elseBranch",
+    // See [dangling else problem](https://en.wikipedia.org/wiki/Dangling_else).
+    // Solution: " `else` is bound to the nearest `if` that precedes it. "
+    // See https://craftinginterpreters.com/appendix-ii.html#if-statement
     pub const If = struct {
         condition: *Expr,
-        // See [dangling else problem](https://en.wikipedia.org/wiki/Dangling_else).
-        // Solution: " `else` is bound to the nearest `if` that precedes it. "
-        // See https://craftinginterpreters.com/appendix-ii.html#if-statement
         else_branch: ?*Stmt,
         then_branch: *Stmt,
     };
@@ -69,6 +66,11 @@ pub const Stmt = union(enum) {
         body: *Stmt,
         condition: *Expr,
     };
+
+    /// Converts union value to a string literal representing the name.
+    pub fn toString(self: Stmt) []const u8 {
+        return @tagName(self);
+    }
 };
 
 // See https://craftinginterpreters.com/appendix-ii.html#statements
