@@ -8,7 +8,14 @@ const Allocator = mem.Allocator;
 
 const debug = @import("debug.zig");
 
-pub const Code = u8;
+// TODO:
+//
+// -> Property based testing
+
+// Type system context:
+//
+// -> User vs Guardian
+// -> User vs Student
 
 pub const ErrorCode = enum(u8) {
     exit_success = 0,
@@ -16,15 +23,16 @@ pub const ErrorCode = enum(u8) {
     syntax_error = 65,
     runtime_error = 70,
 
-    pub fn fromInt(comptime T: type, error_code: u8) ?ErrorCode {
-        assert(T == u8);
+    pub fn fromInt(error_code: u8) ?ErrorCode {
         return inline for (comptime std.meta.fields(ErrorCode)) |field| {
-            if (error_code == @intFromEnum(@field(ErrorCode, field.name))) {
+            const code: u8 = @intFromEnum(@field(ErrorCode, field.name));
+            if (error_code == code) {
                 return @field(ErrorCode, field.name);
             }
         } else null;
     }
 
+    // NOTE: Could use format but need default formatter to print enum as whole
     pub inline fn toString(comptime self: ErrorCode) []const u8 {
         comptime {
             return switch (self) {
@@ -148,6 +156,19 @@ pub fn stdout() std.fs.File {
 
 pub fn stderr() std.fs.File {
     return std.io.getStdErr();
+}
+
+pub fn printStringHashMap(map: anytype) void {
+    print("StringHashMap(anytype) {{\n", .{});
+
+    var it = map.iterator();
+    while (it.next()) |entry| {
+        const key = entry.key_ptr.*;
+        const value = entry.value_ptr.*;
+        print("    {{ '{s}' = {any}, }}\n", .{ key, value });
+    }
+
+    print("\n}}\n", .{});
 }
 
 pub inline fn isAlphaNumeric(c: u8) bool {

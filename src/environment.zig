@@ -6,15 +6,16 @@ const Allocator = mem.Allocator;
 const StringHashMap = std.StringHashMap;
 
 const Token = @import("token.zig");
+const debug = @import("debug.zig");
 const Value = @import("expr.zig").Expr.Value;
 const root = @import("root.zig");
+const logger = @import("logger.zig");
 
 const Environment = @This();
 
 allocator: Allocator,
 enclosing: ?*Environment = null,
 values: StringHashMap(Value),
-// values: std.AutoHashMap([]const u8, Value),
 
 pub const Closure = union(enum) {
     existing: *Environment,
@@ -23,9 +24,7 @@ pub const Closure = union(enum) {
     pub const Void = {};
 };
 
-pub const Error = error{
-    variable_not_declared,
-} || Allocator.Error;
+pub const Error = error{variable_not_declared} || Allocator.Error;
 
 const Self = @This();
 
@@ -41,16 +40,26 @@ pub fn init(allocator: Allocator) Allocator.Error!*Environment {
 }
 
 pub fn deinit(self: *Environment) void {
-    _ = self;
-    std.log.warn("Tried to deinit unimplemented Environment.deinit()", .{});
+    _ = self; // autofix
+    logger.warn(.default, @src(),
+        \\Tried to deinit unimplemented Environment.deinit()"
+    , .{});
+    // self.values.unmanaged.deinit(self.allocator);
+    // if (comptime debug.is_trace_environment) {
+    //     self.metadata.?.deinit();
+    //     self.metadata = null; // may throw
+    // }
+    // self.allocator.destroy(self);
+    // self.* = undefined; // may throw
 }
 
 pub fn initEnclosing(allocator: Allocator, enclosing: *Environment) Environment {
-    return .{
+    const out: Environment = .{
         .allocator = allocator,
         .enclosing = enclosing,
         .values = StringHashMap(Value).init(allocator),
     };
+    return out;
 }
 
 pub fn define(self: *Self, name: []const u8, value: Value) Error!void {
@@ -58,25 +67,13 @@ pub fn define(self: *Self, name: []const u8, value: Value) Error!void {
     try self.values.put(name, value);
 }
 
-/// FIXME: this seems a bit buggy...
-// pub fn ancestor(self: *Environment, distance: usize) *Environment {
-pub fn ancestor(self: *@This(), distance: i32) *Environment {
-    if (comptime false) {
-        var environment = Environment.init(self.allocator) catch |err| {
-            root.exit(.runtime_error, "{}", .{err});
-        };
-        defer self.allocator.destroy(environment);
-        environment = @constCast(self); // avoid mutating original environment
-    }
-
-    var environment: *Environment = self; // Maybe it's time to use self: as @This()
-
-    // Traverse up the chain for the specified depth:
-    // * The interpreter code trusts that the resolver did its job and resolved the variable correctly.
-    // * This implies a deep coupling between these two classes.
-    // * In the resolver, each line of code that touches a scope must have its exact match in the interpreter for modifying an environment.
-    var i: i32 = 0;
-    while (i < distance) : (i += 1) {
+/// Traverse up the chain for the specified depth:
+/// * The interpreter code trusts that the resolver did its job and resolved the variable correctly.
+/// * This implies a deep coupling between these two classes.
+/// * In the resolver, each line of code that touches a scope must have its exact match in the interpreter for modifying an environment.
+pub fn ancestor(self: *Environment, distance: i32) *Environment {
+    var environment: *Environment = self;
+    for (0..@intCast(distance)) |_| {
         environment = environment.enclosing orelse unreachable;
     }
 
@@ -85,11 +82,13 @@ pub fn ancestor(self: *@This(), distance: i32) *Environment {
 
 pub fn get(self: *const Self, name: Token) Error!Value {
     assert(name.lexeme.len > 0 and root.isAlphaNumeric(name.lexeme[0]));
+
     if (self.values.get(name.lexeme)) |value| {
         return value;
     }
     if (self.enclosing) |enclosing| {
-        return enclosing.get(name);
+        const value = try enclosing.get(name);
+        return value;
     }
 
     return Error.variable_not_declared;

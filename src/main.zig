@@ -29,7 +29,7 @@ const root = @import("root.zig");
 ///
 /// * 20240927040854UTC
 ///   https://craftinginterpreters.com/resolving-and-binding.html#static-scope
-pub const g_is_stable_feature_flag = false;
+pub const g_is_stable_pre_resolver_feature_flag = false;
 
 // Just use this to read, and not edit globally but from functions in `main.zig`.
 pub var g_had_runtime_error: bool = false;
@@ -132,7 +132,7 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
             }
 
             var interpreter = try Interpreter.init(allocator);
-            if (comptime !g_is_stable_feature_flag) {
+            if (comptime !g_is_stable_pre_resolver_feature_flag) {
                 // We do need to actually run the resolver, though.
                 // We insert the new pass after the parser does its magic.
                 var resolver = Resolver.init(allocator, &interpreter);
@@ -140,25 +140,12 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
                 if (g_had_error) {
                     break :blk;
                 }
-                logger.info(.{}, @src(), "Locals count: {d}", .{interpreter.locals.count()});
-
-                comptime {
-                    const is_resolver_feature_flag = !g_is_stable_feature_flag;
-                    if (!is_resolver_feature_flag) {
-                        assert(interpreter.environment.values.count() == 0);
-                        assert(interpreter.locals.count() == 0); // this can be 0 too, but oh well!
-                    }
-                }
-
-                if (comptime debug.is_trace_interpreter) {
-                    var it = (try interpreter.locals.clone()).iterator();
-                    while (it.next()) |entry| {
-                        logger.debug(.{}, @src(), "Locals Key Value Pair.{s}[key: {s}, depth: {any}]", //
-                            .{ logger.newline, entry.key_ptr.*, entry.value_ptr.* });
-                    }
-                }
+                root.printStringHashMap(interpreter.locals);
+                root.printStringHashMap(interpreter.environment.values);
+                root.printStringHashMap(interpreter.globals.values);
             }
             try interpreter.interpret(statements, writer);
+
             break :blk;
         }
     }
@@ -166,7 +153,7 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
     if (comptime debug.is_trace_interpreter) {
         const total_errors = g_runtime_error_count + g_error_count;
         if (total_errors != 0) {
-            logger.err(.{}, @src(), "Found {d} error(s).{s}{s}: {d}{s}{s}: {d}", //
+            logger.err(.default, @src(), "Found {d} error(s).{s}{s}: {d}{s}{s}: {d}", //
                 .{ total_errors, logger.newline, root.ErrorCode.runtime_error.toString(), g_runtime_error_count, logger.newline, root.ErrorCode.syntax_error.toString(), g_error_count });
         }
     }
@@ -185,7 +172,7 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
 pub fn main() !void {
     const args = try std.process.argsAlloc(std.heap.page_allocator);
     defer std.process.argsFree(std.heap.page_allocator, args);
-    logger.debug(.{}, @src(), "Process args: {s} {s}", .{ logger.newline, args });
+    logger.debug(.default, @src(), "Process args: {s} {s}", .{ logger.newline, args });
 
     if (args.len < 3) {
         std.debug.print("Usage: ./your_program.sh tokenize <filename>\n", .{});
@@ -197,7 +184,7 @@ pub fn main() !void {
 
     if (Command.fromString(command)) |cmd| {
         if (comptime debug.is_testing) {
-            logger.info(.{}, @src(), "Command: {}", .{cmd});
+            logger.info(.default, @src(), "Command: {}", .{cmd});
         }
     } else {
         std.debug.print("Unknown command: {s}\n", .{command});
@@ -218,7 +205,7 @@ pub fn main() !void {
         command,
         file_contents,
     );
-    assert(root.ErrorCode.fromInt(u8, exit_code) != null);
+    assert(root.ErrorCode.fromInt(exit_code) != null);
 
     std.process.exit(exit_code);
 }

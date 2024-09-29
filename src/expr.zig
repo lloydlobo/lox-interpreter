@@ -1,5 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const testing = std.testing;
 
 const Interpreter = @import("interpreter.zig");
 const Token = @import("token.zig");
@@ -85,7 +86,11 @@ pub const Expr = union(enum) {
                 return self.arityFn();
             }
 
-            pub fn call(self: *const LoxCallable, interpreter: *Interpreter, arguments: []Value) Value {
+            pub fn call(
+                self: *const LoxCallable,
+                interpreter: *Interpreter,
+                arguments: []Value,
+            ) Value {
                 return self.callFn(interpreter, arguments);
             }
 
@@ -145,7 +150,56 @@ pub const Expr = union(enum) {
             }
         }
     };
+
+    /// Converts union value to a string literal representing the name.
+    pub fn toString(self: Expr) []const u8 {
+        return @tagName(self);
+    }
 };
+
+// Property: Reversing a list twice should return the original list
+fn reverseProperty(list: []i32) bool {
+    const reversed1 = reverse(list);
+    const reversed2 = reverse(reversed1);
+    return std.mem.eql(i32, list, reversed2);
+}
+
+// Function to reverse a list
+fn reverse(list: []i32) []i32 {
+    const result = list;
+    std.mem.reverse(i32, result);
+    return result;
+}
+
+// Generate random list of integers
+fn generateRandomList(allocator: *std.mem.Allocator, size: usize) ![]i32 {
+    const list = try allocator.alloc(i32, size);
+    var prng: std.rand.Xoshiro256 = std.rand.DefaultPrng.init(0);
+    var random: std.rand.Random = prng.random();
+    for (list) |*item| {
+        item.* = random.int(i32);
+    }
+    return list;
+}
+
+// Property-based test
+test "reverse property" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator: std.mem.Allocator = &arena.allocator;
+
+    const num_tests = 100;
+    var i: usize = 0;
+    while (i < num_tests) : (i += 1) {
+        const size = std.rand.DefaultPrng
+            .init(i)
+            .random()
+            .intRangeAtMost(usize, 0, 100);
+        const list: []i32 = try generateRandomList(allocator, size);
+
+        try testing.expect(reverseProperty(list));
+    }
+}
 
 // See https://craftinginterpreters.com/appendix-ii.html#expressions
 //

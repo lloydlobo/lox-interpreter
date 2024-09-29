@@ -17,15 +17,15 @@ const main = @import("main.zig");
 const root = @import("root.zig");
 const runtimeError = @import("main.zig").runtimeError;
 
-/// `allocator`:   The arena allocator.
-/// `globals`:     Holds a fixed reference to the outermost global environment.
-/// `environment`: Tracks current frame and changes as we enter and exit local scopes.
-/// `locals`:      Tabular data structure that stores data separately from the objects it relates to.
 const Interpreter = @This(); // File struct
 
+/// `allocator`:   The arena allocator.
 allocator: Allocator,
+/// `globals`:     Holds a fixed reference to the outermost global environment.
 globals: *Environment,
+/// `environment`: Tracks current frame and changes as we enter and exit local scopes.
 environment: *Environment,
+/// `locals`:      Tabular data structure that stores data separately from the objects it relates to.
 locals: StringHashMap(i32),
 
 /// Uses thread-local variables to communicate out-of-band error information.
@@ -37,8 +37,6 @@ pub var undeclared_token: Token = undefined;
 pub var runtime_error: Error = undefined;
 pub var runtime_return_value: Value = undefined;
 pub var runtime_token: Token = undefined;
-
-const Self = @This();
 
 const RuntimeError = error{
     io_error,
@@ -52,10 +50,9 @@ const RuntimeError = error{
 /// Not actual errors, but a way to propagate return values.
 const PropagationException = error{@"return"};
 
-pub const Error = RuntimeError ||
-    PropagationException ||
-    Environment.Error ||
-    Allocator.Error;
+pub const Error = RuntimeError || PropagationException || Environment.Error || Allocator.Error;
+
+const Self = @This();
 
 // TODO: Reason about the relationship between `globals` and `environment`.
 pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
@@ -74,8 +71,9 @@ pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
     {
         const clock_callable = try self.allocator.create(Value.LoxCallable);
         clock_callable.* = clockGlobalCallable;
-        self.globals.define("clock", .{ .callable = clock_callable }) catch |err|
+        self.globals.define("clock", .{ .callable = clock_callable }) catch |err| {
             try handleRuntimeError(err);
+        };
     }
 
     return self;
@@ -83,7 +81,7 @@ pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
 
 pub fn handleRuntimeError(err: Error) Allocator.Error!void {
     return switch (err) {
-        error.@"return" => logger.err(.{}, @src(), "Trick to propagate return values with errors '{any}' {any}.", .{ runtime_token, runtime_return_value }),
+        error.@"return" => logger.err(.default, @src(), "Trick to propagate return values with errors '{any}' {any}.", .{ runtime_token, runtime_return_value }),
         error.io_error => root.exit(.exit_failure, "Encountered i/o error at runtime.", .{}),
         error.not_calable => runtimeError(undeclared_token, "Value not callable '{s}'.", .{undeclared_token.lexeme}),
         error.operand_not_number => runtimeError(runtime_token, "Operand must be a number.", .{}),
@@ -162,6 +160,35 @@ fn printValue(writer: anytype, value: Value) void {
 // Visitor methods
 //
 
+fn visitAssignExpr(self: *Self, assign: Expr.Assign) Error!Value {
+    const value: Value = try self.evaluate(assign.value); // assignment references variables.
+    const token: Token = assign.name;
+
+    if (self.locals.get(token.lexeme)) |distance| { // avoid exta work by matching cached value via depth.
+        self.environment.assignAt(distance, token, value) catch |err| {
+            undeclared_token = token;
+            return err;
+        };
+
+        return value; // success
+    }
+
+    self.globals.assign(token, value) catch |err_1| switch (err_1) {
+        error.variable_not_declared => {
+            self.environment.assign(token, value) catch |err_2| {
+                undeclared_token = token;
+                return err_2;
+            };
+
+            return value; // success
+        },
+        else => |other| return other,
+    };
+
+    return value; // success
+
+}
+
 fn visitBinaryExpr(self: *Self, expr: Expr.Binary) Error!Value {
     const l = try self.evaluate(expr.left);
     const r = try self.evaluate(expr.right);
@@ -175,13 +202,11 @@ fn visitBinaryExpr(self: *Self, expr: Expr.Binary) Error!Value {
         .less => if (opsn) |o| .{ .bool = o.l < o.r } else error.operands_not_numbers,
         .less_equal => if (opsn) |o| .{ .bool = o.l <= o.r } else error.operands_not_numbers,
         .minus => if (opsn) |o| .{ .num = o.l - o.r } else error.operands_not_numbers,
-        .plus => blk: {
-            break :blk (if (checkOperands(expr.operator, l, r, .num)) |o| .{
-                .num = o.l + o.r,
-            } else if (checkOperands(expr.operator, l, r, .str)) |o| .{
-                .str = try mem.concat(self.allocator, u8, &[_][]const u8{ o.l, o.r }),
-            } else error.operands_neither_numbers_nor_strings);
-        },
+        .plus => (if (opsn) |o| .{
+            .num = o.l + o.r,
+        } else if (checkOperands(expr.operator, l, r, .str)) |o| .{
+            .str = try mem.concat(self.allocator, u8, &[_][]const u8{ o.l, o.r }),
+        } else error.operands_neither_numbers_nor_strings),
         .slash => if (opsn) |o| .{ .num = o.l / o.r } else error.operands_not_numbers,
         .star => if (opsn) |o| .{ .num = o.l * o.r } else error.operands_not_numbers,
         else => unreachable,
@@ -201,8 +226,9 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
     const args_count: usize = call.arguments.len;
     var arguments = try std.ArrayList(Value).initCapacity(self.allocator, args_count);
     errdefer arguments.deinit();
-    for (call.arguments) |argument|
+    for (call.arguments) |argument| {
         try arguments.append(try self.evaluate(argument));
+    }
     assert((arguments.items.len == args_count) and (arguments.capacity == args_count));
 
     return switch (callee) {
@@ -261,96 +287,71 @@ fn visitUnaryExpr(self: *Self, expr: Expr.Unary) Error!Value {
     };
 }
 
-fn visitAssignExpr(self: *Self, assign: Expr.Assign) Error!Value {
-    // Assignment references variables.
-    const value = try self.evaluate(assign.value);
-
-    // Avoid exta work by matching cached value via depth.
-    const depth: ?i32 = self.locals.get(value.str);
-    logger.info(.{}, @src(), "Variable local depth if cached.{s}[key: {s}, value: {any}]", //
-        .{ logger.newline, value.str, depth });
-
-    if (self.locals.get(assign.name.lexeme)) |distance| {
-        self.environment.assignAt(distance, assign.name, value) catch |err| {
-            logger.warn(.{}, @src(), "Failed to assignAt.{s}[err: {any}]", //
-                .{ logger.newline, err });
-            undeclared_token = assign.name;
-            return err;
-        };
-        return value;
-    } else {
-        // FIXME: Interpreter.globals does not work... Interpreter.environment fallback does
-        self.globals.assign(assign.name, value) catch |err| {
-            logger.warn(.{}, @src(), "Failed to assign to globals.{s}[err: {any}]{s}[{any}]", //
-                .{ logger.newline, err, logger.newline, assign.name });
-
-            self.environment.assign(assign.name, value) catch |e| {
-                logger.warn(.{}, @src(), "Failed to assign.{s}[err: {any}]{s}[e: {any}]", //
-                    .{ logger.newline, err, logger.newline, e });
-                undeclared_token = assign.name;
-                return e;
-            };
-            return value;
-        };
-        return value;
-    }
-}
-
 fn visitVariableExpr(self: *Self, expr: *Expr) Error!Value {
-    // See https://craftinginterpreters.com/resolving-and-binding.html#accessing-a-resolved-variable
-    if (root.unionPayloadPtr(Token, expr)) |variable| {
-        logger.debug(.{}, @src(), "visitVariableExpr: {any}", .{variable}); // └─ IDENTIFIER hello null
-    } else {
-        logger.warn(.{}, @src(), "Failed to find union payload.{s}[expr: {any}].", //
-            .{ logger.newline, expr }); // └─ IDENTIFIER hello null
-    }
-
-    return self.lookupVariable(expr.variable, expr) catch |err| blk: {
-        logger.warn(.{}, @src(), "Failed to lookup variable.{s}[variable: {s}]{s}[err: {any}]", //
-            .{ logger.newline, expr.variable, logger.newline, err });
-
-        break :blk self.environment.get(expr.variable) catch |e| inner_blk: {
-            logger.err(.{}, @src(), "Failed to get variable value from environment.{s}[variable: {s}]{s}[err: {any}]", //
-                .{ logger.newline, expr.variable.lexeme, logger.newline, e });
+    return self.lookupVariable(expr.variable, expr) catch |err_1| switch (err_1) {
+        error.variable_not_declared => self.environment.get(expr.variable) catch |err_2| blk: {
             undeclared_token = expr.variable;
-            break :inner_blk e;
-        };
+            break :blk err_2;
+        },
+        else => |other| other,
     };
 }
 
 fn lookupVariable(self: *Self, name: Token, expr: *Expr) Error!Value {
+    _ = name; // autofix
+
+    const distance: i32 = self.locals.get(expr.variable.lexeme) orelse {
+        return self.globals.get(expr.variable) catch |err_1| switch (err_1) {
+            error.variable_not_declared => self.environment.get(
+                expr.variable,
+            ) catch |err_2| switch (err_2) {
+                error.variable_not_declared => {
+                    undeclared_token = expr.variable;
+                    return err_2;
+                },
+                else => |other| other,
+            },
+
+            else => |other| other,
+        };
+    };
+
+    return self.environment.getAt(distance, expr.variable) catch |err| switch (err) {
+        error.variable_not_declared => {
+            undeclared_token = expr.variable;
+            return err;
+        },
+        else => |other| other,
+    };
+}
+
+fn lookupVariableOld(self: *Self, name: Token, expr: *Expr) Error!Value {
     return blk: {
         const distance: i32 = self.locals.get(expr.variable.lexeme) orelse {
-            logger.warn(.{}, @src(), "Variable not found in simplocals. Now looking for '{s}' in globals...", .{
+            logger.info(.default, @src(), "Variable not found in simplocals. Now looking for '{s}' in globals...", .{
                 name.lexeme,
             });
             const global_value: Value = self.globals.get(expr.variable) catch |err| {
-                logger.warn(.{}, @src(), "Failed to find variable value from globals. Now looking in environment...{s}[name: {s}]{s}[err: {any}]", //
+                logger.warn(.default, @src(), "Failed to find variable value from globals. Now looking in environment...{s}[name: {s}]{s}[err: {any}]", //
                     .{ logger.newline, name.lexeme, logger.newline, err });
-
                 break :blk self.environment.get(expr.variable) catch |e| inner_blk: {
-                    logger.err(.{}, @src(), "Failed to find variable value in environment.{s}[name: {s}]{s}[err: {any}]", //
+                    logger.err(.default, @src(), "Failed to find variable value in environment.{s}[name: {s}]{s}[err: {any}]", //
                         .{ logger.newline, name.lexeme, logger.newline, e });
-
                     undeclared_token = expr.variable;
                     break :inner_blk e;
                 };
             };
-
-            logger.info(.{}, @src(), "Yay! Got variable value from globals.{s}[{s}]", //
+            logger.info(.default, @src(), "Yay! Found variable value in globals.{s}[{s}]", //
                 .{ logger.newline, global_value });
-
             break :blk global_value;
         };
 
         break :blk self.environment.getAt(distance, expr.variable) catch |err| {
-            logger.warn(.{}, @src(), "Failed to getAt variable value from environment.{s}[name: {s}]{s}[err: {any}]", //
+            logger.warn(.default, @src(), "Failed to getAt variable value from environment. Now looking in environment...{s}[name: {s}]{s}[err: {any}]", //
                 .{ logger.newline, name.lexeme, logger.newline, err });
-
             break :blk self.environment.get(expr.variable) catch |e| inner_blk: {
-                logger.err(.{}, @src(), "Failed to find variable value in environment.{s}[name: {s}]{s}[err: {any}]", //
+                logger.err(.default, @src(), "Failed to find variable value in environment.{s}[name: {s}]{s}[err: {any}]", //
                     .{ logger.newline, name.lexeme, logger.newline, e });
-
                 undeclared_token = expr.variable;
                 break :inner_blk e;
             };
@@ -363,18 +364,7 @@ fn lookupVariable(self: *Self, name: Token, expr: *Expr) Error!Value {
 // children before doing its own work.
 fn evaluate(self: *Self, expr: *Expr) Error!Value {
     return switch (expr.*) {
-        .assign => |assign| blk: {
-            if (comptime main.g_is_stable_feature_flag) { // THIS WORKS!!
-                const value = try self.evaluate(assign.value);
-                _ = self.environment.assign(assign.name, value) catch |err| {
-                    undeclared_token = assign.name;
-                    break :blk err;
-                };
-                break :blk value;
-            } else {
-                break :blk try self.visitAssignExpr(assign);
-            }
-        },
+        .assign => |assign| try self.visitAssignExpr(assign),
         .binary => |binary| try self.visitBinaryExpr(binary),
         .call => |call| try self.visitCallExpr(call),
         .grouping => |grouping| try self.evaluate(grouping),
@@ -484,50 +474,6 @@ pub fn interpretExpression(self: *Self, expr: *Expr, writer: anytype) Allocator.
     printValue(writer, value);
 }
 
-pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!void {
-    if (comptime debug.is_trace_interpreter) {
-        comptime {
-            const is_resolver_feature_flag = !main.g_is_stable_feature_flag;
-            if (!is_resolver_feature_flag) {
-                assert(self.environment.values.count() == 0);
-            }
-        }
-
-        if (self.globals.values.get("clock")) |value| {
-            const fun = value.callable;
-            assert(@TypeOf(fun) == *Value.LoxCallable);
-            assert((fun.arity() == 0) and mem.eql(u8, fun.toString(), "<native fn>"));
-            assert(@TypeOf(fun.call(self, &[_]Value{}).num) == f64);
-        }
-    }
-    errdefer self.environment.values.clearAndFree();
-    defer {
-        if (self.environment.values.count() != 0) self.environment.values.clearAndFree();
-        assert(self.environment.values.count() == 0);
-    }
-
-    var outputs: std.ArrayList(Value) = undefined;
-    if (comptime debug.is_trace_interpreter) {
-        outputs = try std.ArrayList(Value).initCapacity(self.allocator, stmts.len);
-        errdefer outputs.deinit();
-    }
-
-    for (stmts) |*stmt| {
-        const value = self.execute(stmt, writer) catch |err| {
-            return handleRuntimeError(err);
-        };
-
-        if (comptime debug.is_trace_interpreter) {
-            try outputs.append(value);
-        }
-    }
-    if (comptime debug.is_trace_interpreter) {
-        for (try outputs.toOwnedSlice()) |value| {
-            logger.debug(.{}, @src(), "output: '{any}'", .{value});
-        }
-    }
-}
-
 const clockGlobalCallable: Value.LoxCallable = .{
     .arityFn = struct {
         fn arity() usize {
@@ -545,6 +491,31 @@ const clockGlobalCallable: Value.LoxCallable = .{
         }
     }.toString,
 };
+
+pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!void {
+    if (comptime debug.is_trace_interpreter) {
+        const is_resolver_feature_flag = !main.g_is_stable_pre_resolver_feature_flag;
+        if (comptime !is_resolver_feature_flag) {
+            assert(self.environment.values.count() == 0);
+        }
+        if (self.globals.values.get("clock")) |value| {
+            const fun = value.callable;
+            assert(@TypeOf(fun) == *Value.LoxCallable);
+            assert((fun.arity() == 0) and mem.eql(u8, fun.toString(), "<native fn>"));
+            assert(@TypeOf(fun.call(self, &[_]Value{}).num) == f64);
+        }
+    }
+    // defer {
+    //     if (self.environment.values.count() != 0) {
+    //         self.environment.values.clearAndFree();
+    //     }
+    //     assert(self.environment.values.count() == 0);
+    // }
+
+    for (stmts) |*stmt| {
+        _ = self.execute(stmt, writer) catch |err| return handleRuntimeError(err);
+    }
+}
 
 // resolve()
 // Each time `Resolver` visits a variable, it tells the interpreter how many

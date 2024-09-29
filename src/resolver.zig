@@ -31,36 +31,21 @@ interpreter: *Interpreter,
 scopes: ScopeStack,
 current_function: FunctionType = FunctionType.none,
 
-const loggerscope_beginScope = logger.Scope{ .name = "beginScope", .parent = null };
+const loggerscoper_beginScope: logger.Scoper = .{ .scope = .{
+    .name = "beginScope",
+    .parent = null,
+} };
 
 const ResolveError = error{
     // invalid_super,
     // invalid_this,
     // self_inheritance,
-    variable_already_declared,
     invalid_return,
     undefined_variable,
+    unused_variable,
+    variable_already_declared,
 };
 pub const Error = ResolveError || Allocator.Error;
-
-pub fn handleTokenError(err: Error, token: Token, comptime fmt: []const u8) Allocator.Error!void {
-    return switch (err) {
-        error.variable_already_declared,
-        error.invalid_return,
-        error.undefined_variable,
-        => blk: {
-            logger.err(.{}, @src(), "Handling 'static token error'.{s}:[err: '{}' for token '{s}' ].", //
-                .{ logger.newline, err, token });
-
-            break :blk main.tokenError(token, fmt);
-        },
-        inline else => |other| blk: {
-            logger.err(.{}, @src(), "Handling errors other than 'static token error'.{s}:[err: '{any}' for token '{s}' ].", //
-                .{ logger.newline, other, token });
-            break :blk other;
-        },
-    };
-}
 
 const FunctionType = enum {
     none,
@@ -95,6 +80,26 @@ pub fn deinit(self: *Resolver) void {
     std.log.warn("Tried to deinit unimplemented Resolver.deinit()", .{});
 }
 
+pub fn handleTokenError(err: Error, token: Token, comptime fmt: []const u8) Allocator.Error!void {
+    return switch (err) {
+        error.variable_already_declared,
+        error.invalid_return,
+        error.unused_variable,
+        error.undefined_variable,
+        => blk: {
+            logger.err(.default, @src(), "Handling 'static token error'.{s}:[err: '{}' for token '{s}' ].", //
+                .{ logger.newline, err, token });
+
+            break :blk main.tokenError(token, fmt);
+        },
+        inline else => |other| blk: {
+            logger.err(.default, @src(), "Handling errors other than 'static token error'.{s}:[err: '{any}' for token '{s}' ].", //
+                .{ logger.newline, other, token });
+            break :blk other;
+        },
+    };
+}
+
 fn scopesSize(self: *Resolver) usize {
     return self.scopes.items.len;
 }
@@ -125,38 +130,49 @@ fn beginScope(self: *Resolver) Allocator.Error!void {
 
     const scope = BlockScope.init(self.allocator);
     if (comptime debug.is_trace_resolver) {
-        logger.info(loggerscope_beginScope, @src(), "Pushing scope.{s}[prev_size: {d}]", //
+        logger.info(.{ .scope = loggerscoper_beginScope.scope }, @src(), "Pushing scope.{s}[prev_size: {d}]", //
             .{ logger.newline, prev_size });
     }
 
     try self.scopes.append(scope);
 }
 
+fn describeScopeEntries(self: *Resolver) void {
+    for (self.scopes.items) |*scope| {
+        var it = scope.iterator();
+        while (it.next()) |entry| {
+            const name: []const u8 = entry.key_ptr.*;
+            logger.debug(.default, @src(), "Current scope entry '{s}'.", .{
+                name,
+            });
+        }
+    }
+}
+
+// endScope()
 // The scope stack is only used for local block scopes. Variables declared at
 // the top level in the global scope are not tracked by the resolver since they
 // are more dynamic in Lox. When resolving a variable, if we can’t find it in
 // the stack of local scopes, we assume it must be global.
 fn endScope(self: *Resolver) void {
-    const logscope: logger.Scope = .{ .name = @src().fn_name, .parent = &loggerscope_beginScope };
-
-    // scopes are stored in an explicit stack
-    // Invalidates element pointers to the removed element.
-    const scope: BlockScope = self.scopes.pop();
-
-    logger.info(logscope, @src(), "Finally popped scope!{s}[Metadata: {any}]{s}[Scopes count: {any}]", //
-        .{ logger.newline, scope.unmanaged.metadata, logger.newline, scope.unmanaged.count() });
+    const scope: BlockScope = self.scopes.pop(); // note: pop invalidates element pointers to the removed element
+    logger.info(
+        .{ .scope = .{ .name = @src().fn_name, .parent = &loggerscoper_beginScope.scope } },
+        @src(),
+        "Finally popped scope!{s}[Metadata: {any}]{s}[Scopes count: {any}]",
+        .{ logger.newline, scope.unmanaged.metadata, logger.newline, scope.unmanaged.count() },
+    );
 
     var it = scope.iterator();
     while (it.next()) |entry| {
         const is_used: bool = entry.value_ptr.*;
         const name: []const u8 = entry.key_ptr.*;
-        const is_not_used = (!is_used and
-            !mem.startsWith(u8, name, "_") and
-            !mem.eql(u8, name, "this") and
-            !mem.eql(u8, name, "super"));
+        const is_not_used = (!is_used and !mem.startsWith(u8, name, "_") and
+            !mem.eql(u8, name, "this") and !mem.eql(u8, name, "super"));
         if (is_not_used) {
-            logger.err(logscope, @src(), "Warning: Unused local variable '{s}'. Start variable name with underscore if variable is unused.\n", //
-                .{name});
+            const token = undefined;
+            handleTokenError(Error.unused_variable, token, "Unused local variable. Start variable name with underscore if variable is unused") catch @panic("Unimplemented");
+            @panic("Unimplemented");
         }
     }
 }
@@ -165,29 +181,29 @@ fn endScope(self: *Resolver) void {
 // of every variable previously declared in that same scope. If we see a
 // collision, we report an error.
 fn declare(self: *Resolver, name: Token) Allocator.Error!void {
-    const loggerscope_declare: logger.Scope = .{
+    const scoper: logger.Scoper = .{ .scope = .{
         .name = @src().fn_name,
-        .parent = if (self.current_function.isFn()) &loggerscope_beginScope else null,
-    };
+        .parent = if (self.current_function.isFn()) &loggerscoper_beginScope.scope else null,
+    } };
 
     // FIXME: How should we declare a function variable name if it is global.
     // since, we return immediately?
     if (self.isEmptyScopeStack()) {
-        logger.info(loggerscope_declare, @src(), "Not a function type. Found empty stack.{s}[name: {any}]", //
+        logger.info(scoper, @src(), "Not a function type. Found empty stack.{s}[name: {any}]", //
             .{ logger.newline, name });
         assert(!self.current_function.isFn());
         return;
     }
     if (self.scopes.items[self.scopesSize() - 1].contains(name.lexeme)) {
-        logger.err(loggerscope_declare, @src(), "Already a variable with this name in this scope.{s}[name: {any} ]{s}[peeked scope item count: {d}]", //
+        logger.err(scoper, @src(), "Already a variable with this name in this scope.{s}[name: {any} ]{s}[peeked scope item count: {d}]", //
             .{ logger.newline, name, logger.newline, self.scopes.items[self.scopesSize() - 1].count() });
         try handleTokenError(Error.variable_already_declared, name, "Already a variable with this name in this scope.");
     }
 
     const is_resolved = false;
-    logger.info(loggerscope_declare, @src(), "Declaring token...{s}[name: {any} ]{s}[peeked scope item count: {d}]", .{ logger.newline, name, logger.newline, self.scopes.items[self.scopesSize() - 1].count() });
+    logger.info(scoper, @src(), "Declaring token...{s}[name: {any} ]{s}[peeked scope item count: {d}]", .{ logger.newline, name, logger.newline, self.scopes.items[self.scopesSize() - 1].count() });
     try self.scopes.items[self.scopesSize() - 1].put(name.lexeme, is_resolved);
-    logger.info(loggerscope_declare, @src(), "Token declared. {s}[peeked scope item count: {d}]", .{ logger.newline, self.scopes.items[self.scopesSize() - 1].count() });
+    logger.info(scoper, @src(), "Token declared. {s}[peeked scope item count: {d}]", .{ logger.newline, self.scopes.items[self.scopesSize() - 1].count() });
 }
 
 // After (`declare()`) declaring the variable, we resolve its initializer
@@ -197,7 +213,7 @@ fn declare(self: *Resolver, name: Token) Allocator.Error!void {
 // for prime time. We do that by (`define()`) defining it.
 fn define(self: *Resolver, name: Token) Error!void {
     if (self.isEmptyScopeStack()) {
-        return logger.info(.{}, @src(), "Found empty stack.{s}[name: {any}]", .{ logger.newline, name });
+        return logger.info(.default, @src(), "Found empty stack.{s}[name: {any}]", .{ logger.newline, name });
     }
 
     const is_resolved = true; //> is fully initialized and ready for use
@@ -226,51 +242,35 @@ fn define(self: *Resolver, name: Token) Error!void {
 //      resolve phase but do not enforce an error for unresolved globals.
 //      Ensure that during interpretation, only unresolved local variables cause an
 //      error.
+
 fn resolveLocal(self: *Resolver, expr: *Expr, name: Token) Error!void {
-    const logscope = logger.Scope{
-        .name = "resolveLocal",
-        .parent = &loggerscope_beginScope,
-    };
-
-    if (self.current_function.isFn()) {
-        if (!(self.scopesSize() >= 1)) {
-            logger.err(logscope, @src(), "Assertion failed!: `(self.scopesSize() >= 1)`{s}[expr: {any}]{s}[name: {any}]{s}[Actual: {d} > {d}]", //
-                .{ logger.newline, expr, logger.newline, name, logger.newline, self.scopesSize(), 0 });
-        }
-    }
-    // FIXME: index should not be -1 unless `expr` is not in a scope, and a
-    // global!!!
-    //
-    //      beginScope.resolveLocal: resolver.zig:resolveLocal:228:27: info: [1] Now going to resolve local variable.
-    //          └─ [name: 'IDENTIFIER a null' at curr_stack_index: -1].
-    //      beginScope: resolver.zig:resolveExpr:386:49: info: Resolving variable initializer expression.
-    //          └─ [variable: 'IDENTIFIER a null'].
-    //      beginScope.resolveLocal: resolver.zig:resolveLocal:228:27: info: [1] Now going to resolve local variable.
-    //          └─ [name: 'IDENTIFIER a null' at curr_stack_index: -1].
-
+    if (self.isEmptyScopeStack()) return; // expect local to be in global scope
+    if (self.current_function.isFn()) assert(self.scopesSize() >= 1); // expect function to be scoped
     const scope_index = @as(i32, @intCast(self.scopesSize())) - 1;
-    if (scope_index < -1) {
-        logger.warn(logscope, @src(), "Unresolved local, assume it's global.{s}[{s}, {d}]", //
-            .{ logger.newline, name.lexeme, scope_index });
-    }
-    // logger.info(logscope, @src(), "[1] Now going to resolve local variable.{s}[name: '{any}' at curr_stack_index: {d}]. ", //
-    //     .{ logger.newline, name, scope_index });
+    assert(scope_index >= 0); // expect beginScope() to be called before resolveLocal
+
+    // for (0..10) |i| {
+    //     root.print("{d}\n", .{i});
+    // }
+
+    const scoper = logger.Scoper.makeScope(@src()).withParent(&loggerscoper_beginScope.scope);
 
     var i: i32 = scope_index;
 
-    // See https://craftinginterpreters.com/resolving-and-binding.html#resolving-variable-expressions
-    while (i >= 0) : (i -= 1) {
-        logger.info(logscope, @src(), "[2] ...and now resolving local variable.{s}[name: '{any}' at stack: {d} ]. ", //
-            .{ logger.newline, name, i });
+    while (i >= 0) : (i -= 1) { // see https://craftinginterpreters.com/resolving-and-binding.html#resolving-variable-expressions
+        logger.info(scoper, @src(),
+            \\Resolving local variable.{s}name: '{any}' at scope index '{d}'..
+        , .{ logger.newline, name, i });
 
         if (self.scopes.items[@intCast(i)].contains(name.lexeme)) {
             assert((scope_index >= i) and (scope_index - i >= 0));
-            logger.info(logscope, @src(), "Interpreter is going to resolve.{s}[lexeme: {s}]", //
-                .{ logger.newline, name.lexeme });
+            logger.info(scoper, @src(),
+                \\Resolving interpreter's locals.{s}Current local is '{s}'.
+            , .{ logger.newline, name.lexeme });
 
             try self.interpreter.resolve(@constCast(expr), name, scope_index - i);
-
             assert(self.interpreter.locals.contains(name.lexeme)); // sanity check
+
             return;
         }
     }
@@ -301,7 +301,7 @@ pub fn resolveStatements(self: *Resolver, statements: []const Stmt) Allocator.Er
     for (statements) |*stmt| {
         resolveStatement(self, stmt) catch |err| {
             const token_ptr = root.unionPayloadPtr(Token, stmt) orelse unreachable;
-            logger.err(.{}, @src(), "Found payload ptr.{s}[stmt: {any}, token: {any}]", //
+            logger.err(.default, @src(), "Found payload ptr.{s}[stmt: {any}, token: {any}]", //
                 .{ logger.newline, stmt, token_ptr });
 
             return try handleTokenError(err, token_ptr.*, "Failed to resolve statement.");
@@ -310,7 +310,7 @@ pub fn resolveStatements(self: *Resolver, statements: []const Stmt) Allocator.Er
 }
 
 pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
-    const logscope = logger.Scope{ .name = @src().fn_name };
+    const logscope: logger.Scoper = .{ .scope = .{ .name = @src().fn_name } };
 
     switch (stmt.*) {
         .block => |statements| {
@@ -350,6 +350,7 @@ pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
             }
         },
         .var_stmt => |var_stmt| {
+
             // Resolving a variable declaration adds a new entry to the current
             // innermost scope’s map.
             try self.declare(var_stmt.name);
@@ -413,7 +414,7 @@ pub fn resolveExpr(self: *Resolver, expr: *Expr) Error!void {
                         "Can't read local variable in its own initializer.");
                 }
             }
-            logger.info(loggerscope_beginScope, @src(), "Resolving variable initializer expression.{s}[variable: '{any}'].", //
+            logger.info(loggerscoper_beginScope, @src(), "Resolving variable initializer expression.{s}[variable: '{any}'].", //
                 .{ logger.newline, variable });
             try self.resolveLocal(expr, variable);
         },
