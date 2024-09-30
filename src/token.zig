@@ -1,6 +1,6 @@
 const std = @import("std");
-const testing = std.testing;
 const assert = std.debug.assert;
+const testing = std.testing;
 const FormatOptions = std.fmt.FormatOptions;
 
 const formatNumber = @import("root.zig").formatNumber;
@@ -11,6 +11,11 @@ lexeme: []const u8,
 line: u32, // Initial is 1.
 literal: ?Literal,
 type: Type,
+
+comptime {
+    assert(@sizeOf(@This()) == 56);
+    assert(@alignOf(@This()) == 8);
+}
 
 pub fn make(lexeme: []const u8, line: u32, literal: ?Literal, @"type": Type) Token {
     return .{

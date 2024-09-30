@@ -17,6 +17,11 @@ allocator: Allocator,
 enclosing: ?*Environment = null,
 values: StringHashMap(Value),
 
+comptime {
+    assert(@sizeOf(@This()) == 64);
+    assert(@alignOf(@This()) == 8);
+}
+
 pub const Closure = union(enum) {
     existing: *Environment,
     new: void,
@@ -41,16 +46,12 @@ pub fn init(allocator: Allocator) Allocator.Error!*Environment {
 
 pub fn deinit(self: *Environment) void {
     _ = self; // autofix
+
     logger.warn(.default, @src(),
         \\Tried to deinit unimplemented Environment.deinit()"
     , .{});
     // self.values.unmanaged.deinit(self.allocator);
-    // if (comptime debug.is_trace_environment) {
-    //     self.metadata.?.deinit();
-    //     self.metadata = null; // may throw
-    // }
     // self.allocator.destroy(self);
-    // self.* = undefined; // may throw
 }
 
 pub fn initEnclosing(allocator: Allocator, enclosing: *Environment) Environment {
@@ -67,10 +68,6 @@ pub fn define(self: *Self, name: []const u8, value: Value) Error!void {
     try self.values.put(name, value);
 }
 
-/// Traverse up the chain for the specified depth:
-/// * The interpreter code trusts that the resolver did its job and resolved the variable correctly.
-/// * This implies a deep coupling between these two classes.
-/// * In the resolver, each line of code that touches a scope must have its exact match in the interpreter for modifying an environment.
 pub fn ancestor(self: *Environment, distance: i32) *Environment {
     var environment: *Environment = self;
     for (0..@intCast(distance)) |_| {
@@ -95,6 +92,8 @@ pub fn get(self: *const Self, name: Token) Error!Value {
 }
 
 pub fn getAt(self: *Environment, distance: i32, name: Token) Error!Value {
+    assert(name.lexeme.len > 0 and root.isAlphaNumeric(name.lexeme[0]));
+
     return try self.ancestor(distance).get(name);
 }
 
@@ -110,7 +109,14 @@ pub fn assign(self: *Self, name: Token, value: Value) Error!void {
     }
 }
 
-pub fn assignAt(self: *Environment, distance: i32, name: Token, value: Value) Error!void {
+pub fn assignAt(
+    self: *Environment,
+    distance: i32,
+    name: Token,
+    value: Value,
+) Error!void {
+    assert(name.lexeme.len > 0 and root.isAlphaNumeric(name.lexeme[0]));
+
     try self.ancestor(distance).assign(name, value);
 }
 
@@ -249,6 +255,11 @@ test "getAt and assignAt" {
 // ancestor()
 // Walks a fixed number of hops up the parent chain and returns the
 // `Environment` there.
+// Traverse up the chain for the specified depth:
+// * The interpreter code trusts that the resolver did its job and resolved the variable correctly.
+// * This implies a deep coupling between these two classes.
+// * In the resolver, each line of code that touches a scope must have its
+//   exact match in the interpreter for modifying an environment.
 //
 // The `get()` method dynamically walks the chain of enclosing environments,
 // scouring each one to see if the variable might be hiding in there

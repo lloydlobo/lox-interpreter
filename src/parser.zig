@@ -22,6 +22,11 @@ current: usize = 0, // index
 tokens: std.MultiArrayList(Token),
 tokens_len: usize,
 
+comptime {
+    assert(@sizeOf(@This()) == 56);
+    assert(@alignOf(@This()) == 8);
+}
+
 const Error = error{ parse_error, io_error } || Allocator.Error;
 
 pub fn init(tokens: []const Token, allocator: Allocator) Allocator.Error!Parser {

@@ -1,11 +1,11 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const AstPrinter = @import("astprinter.zig").AstPrinter;
+const AstPrinter = @import("astprinter.zig");
 const Interpreter = @import("interpreter.zig");
 const Parser = @import("parser.zig");
 const Resolver = @import("resolver.zig");
-const Scanner = @import("scanner.zig").Scanner;
+const Scanner = @import("scanner.zig");
 const Token = @import("token.zig");
 const debug = @import("debug.zig");
 const logger = @import("logger.zig");
@@ -78,6 +78,7 @@ pub const Command = enum {
         return @tagName(self);
     }
 };
+
 
 pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 {
     blk: {

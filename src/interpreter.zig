@@ -5,7 +5,6 @@ const Allocator = mem.Allocator;
 const StringHashMap = std.StringHashMap;
 
 const Environment = @import("environment.zig");
-const ErrorCode = @import("main.zig").ErrorCode;
 const Expr = @import("expr.zig").Expr;
 const FunctionContext = @import("loxfunction.zig");
 const Stmt = @import("stmt.zig").Stmt;
@@ -27,6 +26,11 @@ globals: *Environment,
 environment: *Environment,
 /// `locals`:      Tabular data structure that stores data separately from the objects it relates to.
 locals: StringHashMap(i32),
+
+comptime {
+    assert(@sizeOf(@This()) == 72);
+    assert(@alignOf(@This()) == 8);
+}
 
 /// Uses thread-local variables to communicate out-of-band error information.
 /// See also:
@@ -224,7 +228,10 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
     self.environment = &environment;
 
     const args_count: usize = call.arguments.len;
-    var arguments = try std.ArrayList(Value).initCapacity(self.allocator, args_count);
+    var arguments = try std.ArrayList(Value).initCapacity(
+        self.allocator,
+        args_count,
+    );
     errdefer arguments.deinit();
     for (call.arguments) |argument| {
         try arguments.append(try self.evaluate(argument));

@@ -1,9 +1,14 @@
 const std = @import("std");
-const testing = std.testing;
 const assert = std.debug.assert;
+const testing = std.testing;
 const SourceLocation = std.builtin.SourceLocation;
 
-const Logger = @This();
+const logger = @This();
+
+comptime {
+    assert(@sizeOf(@This()) == 0);
+    assert(@alignOf(@This()) == 1);
+}
 
 const with_vertical_padding = false;
 const with_horizontal_padding = true;
@@ -169,13 +174,22 @@ pub fn err(scoper: Scoper, comptime src: SourceLocation, comptime format: []cons
 }
 
 test "basic usage" {
-    const root_scope = Scope{ .name = "app" };
-    const network_scope = Scope{ .name = "network", .parent = &root_scope };
-    const db_scope = Scope{ .name = "database", .parent = &root_scope };
+    const root_scope: logger.Scoper = .{ .scope = .{
+        .name = "app",
+        .parent = null,
+    } };
+    const network_scope: logger.Scoper = .{ .scope = .{
+        .name = "network",
+        .parent = &root_scope.scope,
+    } };
+    const db_scope: logger.Scoper = .{ .scope = .{
+        .name = "database",
+        .parent = &root_scope.scope,
+    } };
 
-    Logger.info(.{}, @src(), "Starting application", .{});
-    Logger.debug(root_scope, @src(), "Starting application", .{});
-    Logger.info(network_scope, @src(), "Connected to server", .{});
-    Logger.warn(db_scope, @src(), "Slow query detected: {d}ms", .{150});
-    Logger.err(network_scope, @src(), "Connection lost: {s}", .{"Timeout"});
+    logger.info(.default, @src(), "Starting application", .{});
+    logger.debug(root_scope, @src(), "Starting application", .{});
+    logger.info(network_scope, @src(), "Connected to server", .{});
+    logger.warn(db_scope, @src(), "Slow query detected: {d}ms", .{150});
+    logger.err(network_scope, @src(), "Connection lost: {s}", .{"Timeout"});
 }

@@ -31,21 +31,15 @@ interpreter: *Interpreter,
 scopes: ScopeStack,
 current_function: FunctionType = FunctionType.none,
 
+comptime {
+    assert(@sizeOf(@This()) == 72);
+    assert(@alignOf(@This()) == 8);
+}
+
 const loggerscoper_beginScope: logger.Scoper = .{ .scope = .{
     .name = "beginScope",
     .parent = null,
 } };
-
-const ResolveError = error{
-    // invalid_super,
-    // invalid_this,
-    // self_inheritance,
-    invalid_return,
-    undefined_variable,
-    unused_variable,
-    variable_already_declared,
-};
-pub const Error = ResolveError || Allocator.Error;
 
 const FunctionType = enum {
     none,
@@ -67,19 +61,14 @@ const ClassType = enum {
     subclass,
 };
 
-pub fn init(allocator: Allocator, interpreter: *Interpreter) Resolver {
-    return .{
-        .allocator = allocator,
-        .interpreter = interpreter,
-        .scopes = ScopeStack.init(allocator),
-    };
-}
+const ResolveError = error{
+    invalid_return,
+    undefined_variable,
+    unused_variable,
+    variable_already_declared,
+};
 
-pub fn deinit(self: *Resolver) void {
-    _ = self;
-
-    std.log.warn("Tried to deinit unimplemented Resolver.deinit()", .{});
-}
+pub const Error = ResolveError || Allocator.Error;
 
 pub fn handleTokenError(err: Error, token: Token, comptime fmt: []const u8) Allocator.Error!void {
     return switch (err) {
@@ -99,6 +88,20 @@ pub fn handleTokenError(err: Error, token: Token, comptime fmt: []const u8) Allo
             break :blk other;
         },
     };
+}
+
+pub fn init(allocator: Allocator, interpreter: *Interpreter) Resolver {
+    return .{
+        .allocator = allocator,
+        .interpreter = interpreter,
+        .scopes = ScopeStack.init(allocator),
+    };
+}
+
+pub fn deinit(self: *Resolver) void {
+    _ = self;
+
+    std.log.warn("Tried to deinit unimplemented Resolver.deinit()", .{});
 }
 
 fn scopesSize(self: *const Resolver) usize {
@@ -140,15 +143,12 @@ fn beginScope(self: *Resolver) Allocator.Error!void {
     try self.scopes.append(scope);
 }
 
-// endScope()
-// The scope stack is only used for local block scopes. Variables declared at
-// the top level in the global scope are not tracked by the resolver since they
-// are more dynamic in Lox. When resolving a variable, if we can’t find it in
-// the stack of local scopes, we assume it must be global.
 fn endScope(self: *Resolver) void {
+    const scoper: logger.Scoper = .{ .scope = .{ .name = @src().fn_name, .parent = &loggerscoper_beginScope.scope } };
     const scope: BlockScope = self.scopes.pop(); // note: pop invalidates element pointers to the removed element
+
     logger.info(
-        .{ .scope = .{ .name = @src().fn_name, .parent = &loggerscoper_beginScope.scope } },
+        scoper,
         @src(),
         "Finally popped scope!{s}[Metadata: {any}]{s}[Scopes count: {any}]",
         .{ logger.newline, scope.unmanaged.metadata, logger.newline, scope.unmanaged.count() },
@@ -220,8 +220,9 @@ fn resolveLocal(self: *Resolver, expr: *Expr, name: Token) Error!void {
 
     const scoper = logger.Scoper.makeScope(@src()).withParent(&loggerscoper_beginScope.scope);
 
+    // see https://craftinginterpreters.com/resolving-and-binding.html#resolving-variable-expressions
     var i: i32 = scope_index;
-    while (i >= 0) : (i -= 1) { // see https://craftinginterpreters.com/resolving-and-binding.html#resolving-variable-expressions
+    while (i >= 0) : (i -= 1) {
         logger.info(scoper, @src(),
             \\Resolving local variable.{s}name: '{any}' at scope index '{d}'..
         , .{ logger.newline, name, i });
@@ -245,23 +246,21 @@ fn resolveFunction(
     function: *const Stmt.Function,
     @"type": FunctionType,
 ) Error!void {
+    const prev_size: usize = self.scopesSize();
     const enclosing_function: FunctionType = self.current_function;
     self.current_function = @"type";
     defer self.current_function = enclosing_function;
 
-    const prev_size: usize = self.scopesSize();
-
     try self.beginScope();
-    assert(prev_size < self.scopesSize());
-
-    for (function.parameters) |parameter| {
-        try self.declare(parameter);
-        try self.define(parameter);
+    {
+        assert(prev_size < self.scopesSize());
+        for (function.parameters) |parameter| {
+            try self.declare(parameter);
+            try self.define(parameter);
+        }
+        try self.resolveStatements(function.body);
+        assert(self.scopesSize() >= 0);
     }
-
-    try self.resolveStatements(function.body);
-
-    assert(self.scopesSize() >= 0);
     self.endScope();
 }
 
@@ -278,9 +277,7 @@ pub fn resolveStatements(self: *Resolver, statements: []const Stmt) Allocator.Er
 }
 
 pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
-    const logscope: logger.Scoper = .{ .scope = .{
-        .name = @src().fn_name,
-    } };
+    const scoper: logger.Scoper = .{ .scope = .{ .name = @src().fn_name } };
 
     switch (stmt.*) {
         .block => |statements| {
@@ -295,8 +292,9 @@ pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
             try self.resolveExpr(expr_stmt);
         },
         .function => |function| {
-            logger.info(logscope, @src(), "Found function initializer.{s}[function: '{s}']", //
-                .{ logger.newline, function.name });
+            logger.info(scoper, @src(),
+                \\Found function initializer.{s}[function: '{s}']"
+            , .{ logger.newline, function.name });
             try self.declare(function.name);
             try self.define(function.name);
             try self.resolveFunction(&function, FunctionType.function);
@@ -328,7 +326,7 @@ pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
             // innermost scope’s map.
             try self.declare(var_stmt.name);
             if (var_stmt.initializer) |expr| {
-                logger.info(logscope, @src(), "Found variable initializer.{s}[expr: '{any}']", //
+                logger.info(scoper, @src(), "Found variable initializer.{s}[expr: '{any}']", //
                     .{ logger.newline, expr });
                 try self.resolveExpr(expr);
             }
@@ -393,12 +391,8 @@ pub fn resolveExpr(self: *Resolver, expr: *Expr) Error!void {
     }
 }
 
-// HOW TO USE THIS ?????????????????????????????
-pub fn resolveExpression(
-    allocator: Allocator,
-    interpreter: *Interpreter,
-    expr: *Expr,
-) Error!std.AutoHashMap(*Expr, usize) {
+// Why is this here ???????????????????????????????
+pub fn resolveExpression(allocator: Allocator, interpreter: *Interpreter, expr: *Expr) Error!std.AutoHashMap(*Expr, usize) {
     const resolver: Resolver = try Resolver.init(allocator, interpreter);
     defer resolver.deinit();
 

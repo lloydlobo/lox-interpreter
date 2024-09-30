@@ -1,4 +1,6 @@
 const std = @import("std");
+const assert = std.debug.assert;
+const testing = std.testing;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const fmt = std.fmt;
@@ -22,10 +24,20 @@ pub const Stmt = union(enum) {
     var_stmt: Var,
     while_stmt: While,
 
+    comptime {
+        assert(@sizeOf(@This()) == 96);
+        assert(@alignOf(@This()) == 8);
+    }
+
     pub const Function = struct { // should implement Callable
         body: []Stmt, // allocate separately?
         name: Token,
         parameters: []Token,
+
+        comptime {
+            assert(@sizeOf(@This()) == 88);
+            assert(@alignOf(@This()) == 8);
+        }
 
         pub fn create(allocator: Allocator) !*Function {
             const self = try allocator.create(Function);
@@ -50,21 +62,41 @@ pub const Stmt = union(enum) {
         condition: *Expr,
         else_branch: ?*Stmt,
         then_branch: *Stmt,
+
+        comptime {
+            assert(@sizeOf(@This()) == 24);
+            assert(@alignOf(@This()) == 8);
+        }
     };
 
     pub const Return = struct {
         keyword: Token,
         value: ?*Expr,
+
+        comptime {
+            assert(@sizeOf(@This()) == 64);
+            assert(@alignOf(@This()) == 8);
+        }
     };
 
     pub const Var = struct {
         initializer: ?*Expr,
         name: Token,
+
+        comptime {
+            assert(@sizeOf(@This()) == 64);
+            assert(@alignOf(@This()) == 8);
+        }
     };
 
     pub const While = struct {
         body: *Stmt,
         condition: *Expr,
+
+        comptime {
+            assert(@sizeOf(@This()) == 16);
+            assert(@alignOf(@This()) == 8);
+        }
     };
 
     /// Converts union value to a string literal representing the name.
@@ -72,6 +104,11 @@ pub const Stmt = union(enum) {
         return @tagName(self);
     }
 };
+
+test "basic usage" {
+    try testing.expectEqual(0, @sizeOf(@This()));
+    try testing.expectEqual(1, @alignOf(@This()));
+}
 
 // See https://craftinginterpreters.com/appendix-ii.html#statements
 //

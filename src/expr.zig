@@ -17,6 +17,16 @@ pub const Expr = union(enum) {
     unary: Unary,
     variable: Token,
 
+    comptime {
+        assert(@sizeOf(@This()) == 88);
+        assert(@alignOf(@This()) == 8);
+    }
+
+    /// Converts union value to a string literal representing the name.
+    pub fn toString(self: Expr) []const u8 {
+        return @tagName(self);
+    }
+
     pub const Assign = struct {
         name: Token,
         value: *Expr,
@@ -54,6 +64,11 @@ pub const Expr = union(enum) {
         ret: *LoxReturnValue,
         str: []const u8,
 
+        comptime {
+            assert(@sizeOf(@This()) == 24);
+            assert(@alignOf(@This()) == 8);
+        }
+
         pub const Nil = Value{ .nil = {} };
         pub const True = Value{ .bool = true };
         pub const False = Value{ .bool = !true };
@@ -62,6 +77,11 @@ pub const Expr = union(enum) {
             arityFn: *const fn () usize,
             callFn: *const fn (*Interpreter, []Value) Value,
             toStringFn: *const fn () []const u8,
+
+            comptime {
+                assert(@sizeOf(@This()) == 24);
+                assert(@alignOf(@This()) == 8);
+            }
 
             pub fn arity(self: *const LoxCallable) usize {
                 return self.arityFn();
@@ -81,12 +101,16 @@ pub const Expr = union(enum) {
         };
 
         pub const LoxFunction = struct {
-            /// `Context` pointer to hold function-specific data.
-            context: *anyopaque,
-
             arityFn: *const fn (*anyopaque) usize,
             callFn: *const fn (*anyopaque, *Interpreter, []Value) Value,
             toStringFn: *const fn (*anyopaque) []const u8,
+            /// `Context` pointer to hold function-specific data.
+            context: *anyopaque,
+
+            comptime {
+                assert(@sizeOf(@This()) == 32);
+                assert(@alignOf(@This()) == 8);
+            }
 
             pub fn arity(self: *LoxFunction) usize {
                 return self.arityFn(self.context);
@@ -136,6 +160,11 @@ pub const Expr = union(enum) {
         nil: void,
         ret: Value,
 
+        comptime {
+            assert(@sizeOf(@This()) == 32);
+            assert(@alignOf(@This()) == 8);
+        }
+
         pub fn fromValue(value: ?Value) LoxReturnValue {
             return if (value) |v| switch (v) {
                 .nil => .{ .ret = Value.Nil },
@@ -150,56 +179,56 @@ pub const Expr = union(enum) {
             };
         }
     };
-
-    /// Converts union value to a string literal representing the name.
-    pub fn toString(self: Expr) []const u8 {
-        return @tagName(self);
-    }
 };
 
-// Property: Reversing a list twice should return the original list
-fn reverseProperty(list: []i32) bool {
-    const reversed1 = reverse(list);
-    const reversed2 = reverse(reversed1);
-    return std.mem.eql(i32, list, reversed2);
+test "basic usage" {
+    try testing.expectEqual(0, @sizeOf(@This()));
+    try testing.expectEqual(1, @alignOf(@This()));
 }
 
-// Function to reverse a list
-fn reverse(list: []i32) []i32 {
-    const result = list;
-    std.mem.reverse(i32, result);
-    return result;
-}
-
-// Generate random list of integers
-fn generateRandomList(allocator: *std.mem.Allocator, size: usize) ![]i32 {
-    const list = try allocator.alloc(i32, size);
-    var prng: std.rand.Xoshiro256 = std.rand.DefaultPrng.init(0);
-    var random: std.rand.Random = prng.random();
-    for (list) |*item| {
-        item.* = random.int(i32);
-    }
-    return list;
-}
-
-// Property-based test
-test "reverse property" {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator: std.mem.Allocator = &arena.allocator;
-
-    const num_tests = 100;
-    var i: usize = 0;
-    while (i < num_tests) : (i += 1) {
-        const size = std.rand.DefaultPrng
-            .init(i)
-            .random()
-            .intRangeAtMost(usize, 0, 100);
-        const list: []i32 = try generateRandomList(allocator, size);
-
-        try testing.expect(reverseProperty(list));
-    }
-}
+// // Property: Reversing a list twice should return the original list
+// fn reverseProperty(list: []i32) bool {
+//     const reversed1 = reverse(list);
+//     const reversed2 = reverse(reversed1);
+//     return std.mem.eql(i32, list, reversed2);
+// }
+//
+// // Function to reverse a list
+// fn reverse(list: []i32) []i32 {
+//     const result = list;
+//     std.mem.reverse(i32, result);
+//     return result;
+// }
+//
+// // Generate random list of integers
+// fn generateRandomList(allocator: *std.mem.Allocator, size: usize) ![]i32 {
+//     const list = try allocator.alloc(i32, size);
+//     var prng: std.rand.Xoshiro256 = std.rand.DefaultPrng.init(0);
+//     var random: std.rand.Random = prng.random();
+//     for (list) |*item| {
+//         item.* = random.int(i32);
+//     }
+//     return list;
+// }
+//
+// // Property-based test
+// test "reverse property" {
+//     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+//     defer arena.deinit();
+//     const allocator: std.mem.Allocator = &arena.allocator;
+//
+//     const num_tests = 100;
+//     var i: usize = 0;
+//     while (i < num_tests) : (i += 1) {
+//         const size = std.rand.DefaultPrng
+//             .init(i)
+//             .random()
+//             .intRangeAtMost(usize, 0, 100);
+//         const list: []i32 = try generateRandomList(allocator, size);
+//
+//         try testing.expect(reverseProperty(list));
+//     }
+// }
 
 // See https://craftinginterpreters.com/appendix-ii.html#expressions
 //
