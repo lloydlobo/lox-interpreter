@@ -288,6 +288,11 @@ pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
         .break_stmt => |_| {
             @panic("Unimplemented");
         },
+        .class => |class| {
+            logger.debug(scoper, @src(), "{}", .{class});
+            try self.declare(class.name);
+            try self.define(class.name);
+        },
         .expr_stmt => |expr_stmt| {
             try self.resolveExpr(expr_stmt);
         },
@@ -355,6 +360,9 @@ pub fn resolveExpr(self: *Resolver, expr: *Expr) Error!void {
             for (call.arguments) |arg_expr| {
                 try self.resolveExpr(arg_expr);
             }
+        },
+        .get => |get| {
+            try self.resolveExpr(get.value);
         },
         .grouping => |grouping| {
             try self.resolveExpr(grouping);

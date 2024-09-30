@@ -13,13 +13,13 @@ const logger = @import("logger.zig");
 
 /// `statement → block | break_stmt | expr_stmt | for_stmt | if_stmt | print_stmt | var_stmt | while_stmt  ;`
 pub const Stmt = union(enum) {
-    block: []Stmt,
-    break_stmt: ?*Expr,
-    expr_stmt: *Expr,
+    block: Block,
+    break_stmt: Break,
+    class: Class,
+    expr_stmt: Expression,
     function: Function,
-    /// "if" "(" expression ")" statement ( "else" statement )? ;
     if_stmt: If,
-    print_stmt: *Expr,
+    print_stmt: Print,
     return_stmt: Return,
     var_stmt: Var,
     while_stmt: While,
@@ -28,6 +28,39 @@ pub const Stmt = union(enum) {
         assert(@sizeOf(@This()) == 96);
         assert(@alignOf(@This()) == 8);
     }
+
+    /// Converts union value to a string literal representing the name.
+    pub fn toString(self: Stmt) []const u8 {
+        return @tagName(self);
+    }
+
+    pub const Block = []Stmt;
+
+    pub const Break = ?*Expr;
+
+    pub const Class = struct {
+        name: Token,
+        methods: []Stmt.Function,
+
+        comptime {
+            assert(@sizeOf(@This()) == 72);
+            assert(@alignOf(@This()) == 8);
+        }
+
+        pub const class_kind = "class";
+
+        pub fn create(allocator: Allocator) !*Class {
+            const self = try allocator.create(Class);
+            errdefer allocator.destroy(self);
+            if (comptime debug.is_trace_garbage_collector) {
+                logger.debug(.default, @src(), "{} allocate {} for {s}", .{ @intFromPtr(&self), @sizeOf(Class), @typeName(Class) });
+            }
+
+            return self;
+        }
+    };
+
+    pub const Expression = *Expr;
 
     pub const Function = struct { // should implement Callable
         body: []Stmt, // allocate separately?
@@ -39,27 +72,22 @@ pub const Stmt = union(enum) {
             assert(@alignOf(@This()) == 8);
         }
 
+        pub const function_kind = "function";
+
         pub fn create(allocator: Allocator) !*Function {
             const self = try allocator.create(Function);
             errdefer allocator.destroy(self);
-
-            if (comptime debug.is_trace_garbage_collector)
-                logger.debug(.default, @src(), "{} allocate {} for {s}", .{
-                    @intFromPtr(&self),
-                    @sizeOf(Function),
-                    @typeName(Function),
-                });
+            if (comptime debug.is_trace_garbage_collector) {
+                logger.debug(.default, @src(), "{} allocate {} for {s}", .{ @intFromPtr(&self), @sizeOf(Function), @typeName(Function) });
+            }
 
             return self;
         }
     };
 
-    /// "If  : Expr condition, Stmt thenBranch," + " Stmt elseBranch",
-    // See [dangling else problem](https://en.wikipedia.org/wiki/Dangling_else).
-    // Solution: " `else` is bound to the nearest `if` that precedes it. "
-    // See https://craftinginterpreters.com/appendix-ii.html#if-statement
     pub const If = struct {
         condition: *Expr,
+        /// `else` is bound to the nearest `if` that precedes it.
         else_branch: ?*Stmt,
         then_branch: *Stmt,
 
@@ -68,6 +96,8 @@ pub const Stmt = union(enum) {
             assert(@alignOf(@This()) == 8);
         }
     };
+
+    pub const Print = *Expr;
 
     pub const Return = struct {
         keyword: Token,
@@ -98,16 +128,13 @@ pub const Stmt = union(enum) {
             assert(@alignOf(@This()) == 8);
         }
     };
-
-    /// Converts union value to a string literal representing the name.
-    pub fn toString(self: Stmt) []const u8 {
-        return @tagName(self);
-    }
 };
 
 test "basic usage" {
     try testing.expectEqual(0, @sizeOf(@This()));
     try testing.expectEqual(1, @alignOf(@This()));
+
+    // std.log.warn("{}", .{@sizeOf(Stmt.Class)});
 }
 
 // See https://craftinginterpreters.com/appendix-ii.html#statements

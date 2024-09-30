@@ -1,9 +1,17 @@
 print "file: test.lox";
 
+print "# Class";
+
+class Bagel {};
+
+var bagel = Bagel();
+print bagel; // Prints "Bagel instance".
+// bagel(); // visitCallExpr : .instance => ...
+
+
+
 // Invalid return errors
 // return "at top level";
-
-27 - 60 >= -99 * 2 / 99 + 76;
 
 // `clock()` is a global function baked in, just like `print()` is.
 // Tested approx at UTC timestamp: 20240928053409UTC

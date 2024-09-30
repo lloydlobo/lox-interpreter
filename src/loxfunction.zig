@@ -27,17 +27,7 @@ comptime {
     assert(@alignOf(@This()) == 8);
 }
 
-fn handleRuntimeError(self: *FunctionContext, err: Interpreter.Error) void {
-    root.eprint("Error in function: '{s}': ", .{self.declaration.name.lexeme});
-    Interpreter.handleRuntimeError(err) catch |e| root.exit(.runtime_error, "{any}.", .{e});
-}
-
-fn handleRuntimeErrorAndExit(self: *FunctionContext, err: Interpreter.Error) noreturn {
-    self.handleRuntimeError(err);
-    root.exit(.runtime_error, "{any}", .{err});
-}
-
-pub fn makeLoxFunction(
+pub fn createLoxFunction(
     allocator: Allocator,
     declaration: Stmt.Function,
     closure: *Environment,
@@ -62,8 +52,32 @@ pub fn makeLoxFunction(
     return out;
 }
 
-fn arityFn(context: *anyopaque) usize {
-    return @as(*FunctionContext, @alignCast(@ptrCast(context))).declaration.parameters.len;
+fn handleRuntimeError(self: *FunctionContext, err: Interpreter.Error) void {
+    root.eprint("Error in function: '{s}': ", .{self.declaration.name.lexeme});
+    Interpreter.handleRuntimeError(err) catch |e| root.exit(.runtime_error, "{any}.", .{e});
+}
+
+fn handleRuntimeErrorAndExit(self: *FunctionContext, err: Interpreter.Error) noreturn {
+    self.handleRuntimeError(err);
+    root.exit(.runtime_error, "{any}", .{err});
+}
+
+/// See also https://stackoverflow.com/a/66665672
+fn toStringFn(context: *anyopaque) []const u8 {
+    const ctx = @as(*FunctionContext, @alignCast(@ptrCast(context)));
+    const name = ctx.declaration.name.lexeme;
+
+    const buffer = std.fmt.allocPrint(
+        ctx.allocator,
+        "<fn {s}>",
+        .{name},
+    ) catch |err| {
+        ctx.handleRuntimeErrorAndExit(err); //> noreturn
+    };
+    errdefer ctx.allocator.free(buffer);
+    comptime assert(@TypeOf(buffer) == []u8);
+
+    return buffer;
 }
 
 fn callFn(context: *anyopaque, interpreter: *Interpreter, arguments: []Value) Value {
@@ -74,7 +88,9 @@ fn callFn(context: *anyopaque, interpreter: *Interpreter, arguments: []Value) Va
     environment = ctx.closure;
 
     for (ctx.declaration.parameters, 0..) |param, i| {
-        ctx.closure.define(param.lexeme, arguments[i]) catch |err| ctx.handleRuntimeErrorAndExit(err);
+        ctx.closure.define(param.lexeme, arguments[i]) catch |err| {
+            ctx.handleRuntimeErrorAndExit(err);
+        };
     }
 
     _ = interpreter.executeBlock(
@@ -100,16 +116,8 @@ fn callFn(context: *anyopaque, interpreter: *Interpreter, arguments: []Value) Va
     return Value.Nil;
 }
 
-fn toStringFn(context: *anyopaque) []const u8 {
-    const ctx = @as(*FunctionContext, @alignCast(@ptrCast(context)));
-    const buffer: []u8 = std.fmt.allocPrint(
-        ctx.allocator,
-        "<fn {s}>",
-        .{ctx.declaration.name.lexeme},
-    ) catch |err| ctx.handleRuntimeErrorAndExit(err); // See also https://stackoverflow.com/a/66665672
-    errdefer ctx.allocator.free(buffer);
-
-    return buffer;
+fn arityFn(context: *anyopaque) usize {
+    return @as(*FunctionContext, @alignCast(@ptrCast(context))).declaration.parameters.len;
 }
 
 test "basic usage" {

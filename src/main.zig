@@ -79,7 +79,6 @@ pub const Command = enum {
     }
 };
 
-
 pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 {
     blk: {
         const cmd = Command.fromString(command).?;
@@ -141,9 +140,11 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
                 if (g_had_error) {
                     break :blk;
                 }
-                root.printStringHashMap(interpreter.locals);
-                root.printStringHashMap(interpreter.environment.values);
-                root.printStringHashMap(interpreter.globals.values);
+                if (comptime debug.is_trace_interpreter) {
+                    root.printStringHashMap(interpreter.locals);
+                    root.printStringHashMap(interpreter.environment.values);
+                    root.printStringHashMap(interpreter.globals.values);
+                }
             }
             try interpreter.interpret(statements, writer);
 

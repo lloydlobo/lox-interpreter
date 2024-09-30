@@ -7,6 +7,7 @@ const StringHashMap = std.StringHashMap;
 const Environment = @import("environment.zig");
 const Expr = @import("expr.zig").Expr;
 const FunctionContext = @import("loxfunction.zig");
+const ClassContext = @import("loxclass.zig");
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
 const Value = @import("expr.zig").Expr.Value;
@@ -38,17 +39,22 @@ comptime {
 ///   - https://github.com/ziglang/zig/issues/2647
 /// Key doesn't already exist in environments's variable map.
 pub var undeclared_token: Token = undefined;
+pub var runtime_token: Token = undefined;
+
 pub var runtime_error: Error = undefined;
 pub var runtime_return_value: Value = undefined;
-pub var runtime_token: Token = undefined;
 
 const RuntimeError = error{
     io_error,
+
     operand_not_number,
     operands_not_numbers,
     operands_neither_numbers_nor_strings,
+
+    not_callable,
     wrong_arity,
-    not_calable,
+
+    non_instance_property,
 };
 
 /// Not actual errors, but a way to propagate return values.
@@ -84,17 +90,47 @@ pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
 }
 
 pub fn handleRuntimeError(err: Error) Allocator.Error!void {
-    return switch (err) {
-        error.@"return" => logger.err(.default, @src(), "Trick to propagate return values with errors '{any}' {any}.", .{ runtime_token, runtime_return_value }),
-        error.io_error => root.exit(.exit_failure, "Encountered i/o error at runtime.", .{}),
-        error.not_calable => runtimeError(undeclared_token, "Value not callable '{s}'.", .{undeclared_token.lexeme}),
-        error.operand_not_number => runtimeError(runtime_token, "Operand must be a number.", .{}),
-        error.operands_neither_numbers_nor_strings => runtimeError(runtime_token, "Operands must two numbers or two strings.", .{}),
-        error.operands_not_numbers => runtimeError(runtime_token, "Operands must be numbers.", .{}),
-        error.variable_not_declared => runtimeError(undeclared_token, "Undefined variable '{s}'.", .{undeclared_token.lexeme}),
-        error.wrong_arity => runtimeError(undeclared_token, "Wrong function arguments arity '{s}'.", .{undeclared_token.lexeme}),
-        else => |other| other,
-    };
+    switch (err) {
+        error.io_error => {
+            return root.exit(.exit_failure, "Encountered i/o error at runtime.", .{});
+        },
+
+        error.operand_not_number => {
+            return runtimeError(runtime_token, "Operand must be a number.", .{});
+        },
+        error.operands_neither_numbers_nor_strings => {
+            return runtimeError(runtime_token, "Operands must two numbers or two strings.", .{});
+        },
+        error.operands_not_numbers => {
+            return runtimeError(runtime_token, "Operands must be numbers.", .{});
+        },
+
+        error.not_callable => {
+            return runtimeError(undeclared_token, "Value not callable '{s}'.", .{undeclared_token.lexeme});
+        },
+        error.wrong_arity => {
+            return runtimeError(undeclared_token, "Wrong function arguments arity '{s}'.", .{undeclared_token.lexeme});
+        },
+
+        error.non_instance_property => {
+            return runtimeError(runtime_token, "Only instances have properties '{s}'.", .{runtime_token.lexeme});
+        },
+
+        // PropagationException
+        error.@"return" => {
+            return logger.err(.default, @src(), "Trick to propagate return values with errors '{any}' {any}.", .{
+                runtime_token,
+                runtime_return_value,
+            });
+        },
+
+        // Environment.Error
+        error.variable_not_declared => {
+            return runtimeError(undeclared_token, "Undefined variable '{s}'.", .{undeclared_token.lexeme});
+        },
+
+        else => |other| return other,
+    }
 }
 
 /// Matches operator type with kind and returns its type.
@@ -151,12 +187,16 @@ fn isEqual(a: Value, b: Value) bool {
 fn printValue(writer: anytype, value: Value) void {
     switch (value) {
         .bool => |@"bool"| std.fmt.format(writer, "{}", .{@"bool"}) catch {},
-        .callable => |callable| std.fmt.format(writer, "{s}", .{callable.toString()}) catch {},
-        .function => |function| std.fmt.format(writer, "{s}", .{function.toString()}) catch {},
         .nil => std.fmt.format(writer, "nil", .{}) catch {},
         .num => |num| std.fmt.format(writer, "{d}", .{num}) catch {},
-        .ret => |ret| std.fmt.format(writer, "{any}", .{ret.toValue()}) catch {},
         .str => |str| std.fmt.format(writer, "{s}", .{str}) catch {},
+
+        .ret => |ret| std.fmt.format(writer, "{any}", .{ret.toValue()}) catch {},
+
+        .callable => |callable| std.fmt.format(writer, "{s}", .{callable.toString()}) catch {},
+        .function => |callable_function| std.fmt.format(writer, "{s}", .{callable_function.toString()}) catch {},
+        .class => |callable_class| std.fmt.format(writer, "{s}", .{callable_class.toString()}) catch {},
+        .instance => |callable_class_instance| std.fmt.format(writer, "{s}", .{callable_class_instance.toString()}) catch {},
     }
 }
 
@@ -220,9 +260,9 @@ fn visitBinaryExpr(self: *Self, expr: Expr.Binary) Error!Value {
 /// Each call needs a new environment for recursion and concurrency.
 /// `call()` creates environment, binds parameters, and executes.
 fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
-    const callee = try self.evaluate(call.callee);
+    const callee: Value = try self.evaluate(call.callee);
 
-    const prev_env = self.environment;
+    const prev_env: *Environment = self.environment;
     defer self.environment = prev_env;
     var environment = Environment.initEnclosing(self.allocator, prev_env);
     self.environment = &environment;
@@ -242,21 +282,107 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
         .callable => |callable| blk: { // `Value.LoxCallable` (native)
             if (callable.arity() != args_count) {
                 runtime_token = call.paren;
-                break :blk error.wrong_arity;
+                break :blk Error.wrong_arity;
             }
             break :blk callable.callFn(self, try arguments.toOwnedSlice());
         },
         .function => |function| blk: { // `Value.LoxFunction`
             if (function.arity() != args_count) {
                 runtime_token = call.paren;
-                break :blk error.wrong_arity;
+                break :blk Error.wrong_arity;
             }
             break :blk function.call(self, try arguments.toOwnedSlice());
         },
+        //
+        //
+        // Right now, if you try this:
+        //
+        //      class Bagel {}
+        //      Bagel();
+        //
+        // You get a runtime error. visitCallExpr() checks to see if the called
+        // object implements LoxCallable and reports an error since LoxClass
+        // doesn’t. Not yet, that is.
+        //
+        //
+        // SHOULD BE BAGEL INSTANCE
+        //
+        //      print "file: test.lox";
+        //
+        //      print "# Class";
+        //
+        //      class Bagel {};
+        //      var bagel = Bagel();
+        //      print Bagel; // Prints "Bagel instance".
+        //
+        // See https://craftinginterpreters.com/classes.html#creating-instances
+        //
+        //
+        //
+        //
+        .class => |class| blk: {
+            logger.warn(.default, @src(), "DOING: .class {any} for call: {any}", .{
+                class,
+                call.callee,
+            });
+
+            if (class.arity() != args_count) {
+                runtime_token = call.paren;
+                break :blk Error.wrong_arity;
+            }
+            break :blk class.call(self, try arguments.toOwnedSlice());
+        },
+        .instance => |_| @panic("Unimplemented"),
+        //
+        //
+        //
+        //
+        //
+        //
+        //
+        //
         else => blk: {
             defer arguments.deinit();
             runtime_token = call.paren;
-            break :blk error.not_calable;
+            break :blk Error.not_callable;
+        },
+    };
+}
+
+fn visitGetExpr(self: *Self, get: Expr.Get) Error!Value {
+    // Evaluate the expression whose property is being accessed.
+    const value: Value = try self.evaluate(get.value);
+
+    return switch (value) {
+        .instance => |instance| blk: {
+            _ = instance;
+            // If the object is a LoxInstance, then we ask it to look up the property. It must be time to give LoxInstance some actual state. A map will do fine.
+            //
+            //   private LoxClass klass;
+            //   private final Map<String, Object> fields = new HashMap<>();
+            //
+            //   LoxInstance(LoxClass klass) {
+            // lox/LoxInstance.java, in class LoxInstance
+            // Each key in the map is a property name and the corresponding value is the property’s value. To look up a property on an instance:
+            //
+            //   Object get(Token name) {
+            //     if (fields.containsKey(name.lexeme)) {
+            //       return fields.get(name.lexeme);
+            //     }
+            //
+            //     throw new RuntimeError(name,
+            //         "Undefined property '" + name.lexeme + "'.");
+            //   }
+            //
+            // const out: Value = instance.get(self, get.name);
+            // break :blk out;
+
+            break :blk Value.Nil;
+        },
+        else => blk: {
+            // Note: In Lox, only class instances can have properties.
+            runtime_token = get.name;
+            break :blk RuntimeError.non_instance_property;
         },
     };
 }
@@ -374,6 +500,7 @@ fn evaluate(self: *Self, expr: *Expr) Error!Value {
         .assign => |assign| try self.visitAssignExpr(assign),
         .binary => |binary| try self.visitBinaryExpr(binary),
         .call => |call| try self.visitCallExpr(call),
+        .get => |get| try self.visitGetExpr(get),
         .grouping => |grouping| try self.evaluate(grouping),
         .literal => |literal| try self.visitLiteralExpr(literal),
         .logical => |logical| try self.visitLogicalExpr(logical),
@@ -416,12 +543,32 @@ pub fn executeBlock(
 }
 
 pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
+    const scoper: logger.Scoper = .{ .scope = .{ .name = @src().fn_name } };
+
     switch (stmt.*) { // Visit .****Stmt
         .block => |statements| {
             _ = try self.executeBlock(statements, .{ .new = Environment.Closure.Void }, writer);
         },
         .break_stmt => |_| {
             @panic("Unimplemented");
+        },
+        .class => |class| {
+            try self.environment.define(class.name.lexeme, Value.Nil);
+
+            // FIXME: Implement callFn(), arityFn(), ... with
+            // LoxInstance.makeLoxClass(self.allocator, class,
+            // self.environment);
+            //     `Value not callable ''.`
+
+            const cls: *Value.LoxClass = try ClassContext.createLoxClass(
+                self.allocator,
+                class.name.lexeme,
+            );
+            // const cls: *Value.LoxClass = try self.allocator.create(Value.LoxClass);
+            errdefer self.allocator.destroy(cls);
+
+            try self.environment.assign(class.name, .{ .class = cls });
+            logger.warn(scoper, @src(), "Implementing .class. {s}{}", .{ logger.newline, class });
         },
         .expr_stmt => |expr| {
             _ = try self.evaluate(expr);
@@ -433,15 +580,12 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
                 try self.execute(else_branch, writer);
         },
         .function => |function| { // `Stmt.Function`
-            const fun = try FunctionContext.makeLoxFunction(
+            const fun: *Value.LoxFunction = try FunctionContext.createLoxFunction(
                 self.allocator,
                 function,
                 self.environment,
             );
-            try self.environment.define(
-                function.name.lexeme,
-                .{ .function = fun },
-            );
+            try self.environment.define(function.name.lexeme, .{ .function = fun });
         },
         .print_stmt => |expr| {
             printValue(writer, try self.evaluate(expr));

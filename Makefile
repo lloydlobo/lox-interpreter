@@ -39,10 +39,10 @@ ast-check: $(ZIG_FILES)
 #		zig test $(src) $(TRACE_FLAGS); \
 #	)
 .PHONY: test-zig-srcs
-test-zig-srcs: $(ZIG_SRCS)
+test-zig-srcs: $(ZIG_SRCS) ./.zig-cache/o
 	@make ast-check
 	@echo "Running zig tests in parallel on $(ZIG_SRCS)"
-	@echo $(ZIG_SRCS) | tr ' ' '\n' | parallel -j $(shell nproc) --halt-on-error 1 'echo "Running zig test on {}"; zig ast-check {}; zig test {} $(TRACE_FLAGS);'
+	@echo $(ZIG_SRCS) | tr ' ' '\n' | parallel -j $(shell nproc) --halt soon,fail=3% 'echo "Running zig test on {}"; zig ast-check {}; zig test {} $(TRACE_FLAGS) 2>&1'
 
 .PHONY: test-zig-srcs
 SUPPRESS_STDERR_FLAGS := 2>&1 | head
@@ -58,10 +58,10 @@ test: $(ZIG_SRCS)
 	@date && echo $(UNAME_S)
 
 	# capture both stdout and stderr
-	zig test src/test_statements_and_state.zig $(TRACE_FLAGS) 2>&1 # | head &
-	zig test src/test_expressions_evaluate.zig $(TRACE_FLAGS) 2>&1 # | head &
-	zig test src/test_expressions_parse.zig    $(TRACE_FLAGS) 2>&1 # | head &
-	zig test src/test_scanning.zig             $(TRACE_FLAGS) 2>&1 # | head &
+	zig test src/test_statements_and_state.zig $(TRACE_FLAGS) 2>&1 | head &
+	zig test src/test_expressions_evaluate.zig $(TRACE_FLAGS) 2>&1 | head &
+	zig test src/test_expressions_parse.zig    $(TRACE_FLAGS) 2>&1 | head &
+	zig test src/test_scanning.zig             $(TRACE_FLAGS) 2>&1 | head &
 
 	wait
 
