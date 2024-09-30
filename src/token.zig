@@ -1,16 +1,30 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const testing = std.testing;
+const FormatOptions = std.fmt.FormatOptions;
 
 const formatNumber = @import("root.zig").formatNumber;
 
 const Token = @This();
 
-// pub const Token: type = struct {
 lexeme: []const u8,
+line: u32, // Initial is 1.
 literal: ?Literal,
 type: Type,
-line: u32,
+
+comptime {
+    assert(@sizeOf(@This()) == 56);
+    assert(@alignOf(@This()) == 8);
+}
+
+pub fn make(lexeme: []const u8, line: u32, literal: ?Literal, @"type": Type) Token {
+    return .{
+        .lexeme = lexeme,
+        .line = line,
+        .literal = literal,
+        .type = @"type",
+    };
+}
 
 pub const Type = enum {
     // Single-character tokens
@@ -86,22 +100,18 @@ pub const Type = enum {
     @"var",
     @"while",
 
-    //
-    // whitespace,
-    //
-    // comment,
     ///      10
     eof,
 };
 
 pub const Literal = union(enum) {
-    str: []const u8,
     num: f64,
+    str: []const u8,
 
-    pub fn format(self: Literal, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: Literal, comptime _: []const u8, _: FormatOptions, writer: anytype) !void {
         switch (self) {
-            .str => |str| try std.fmt.format(writer, "{s}", .{str}),
             .num => |num| try formatNumber(writer, num),
+            .str => |str| try std.fmt.format(writer, "{s}", .{str}),
         }
     }
 };
@@ -114,7 +124,6 @@ pub fn format(self: Token, comptime _: []const u8, _: std.fmt.FormatOptions, wri
         self.literal,
     });
 }
-// };
 
 // copied from lib/std/multi_array_list.zig
 test "basic usage with MultiArrayList" {

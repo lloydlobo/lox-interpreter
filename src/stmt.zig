@@ -1,4 +1,6 @@
 const std = @import("std");
+const assert = std.debug.assert;
+const testing = std.testing;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const fmt = std.fmt;
@@ -7,6 +9,7 @@ const FormatOptions = fmt.FormatOptions;
 const Expr = @import("expr.zig").Expr;
 const Token = @import("token.zig");
 const debug = @import("debug.zig");
+const logger = @import("logger.zig");
 
 /// `statement → block | break_stmt | expr_stmt | for_stmt | if_stmt | print_stmt | var_stmt | while_stmt  ;`
 pub const Stmt = union(enum) {
@@ -21,9 +24,9 @@ pub const Stmt = union(enum) {
     var_stmt: Var,
     while_stmt: While,
 
-    /// Converts union value to a string literal representing the name.
-    pub fn toString(self: Stmt) []const u8 {
-        return @tagName(self);
+    comptime {
+        assert(@sizeOf(@This()) == 96);
+        assert(@alignOf(@This()) == 8);
     }
 
     pub const Function = struct { // should implement Callable
@@ -31,11 +34,17 @@ pub const Stmt = union(enum) {
         name: Token,
         parameters: []Token,
 
+        comptime {
+            assert(@sizeOf(@This()) == 88);
+            assert(@alignOf(@This()) == 8);
+        }
+
         pub fn create(allocator: Allocator) !*Function {
             const self = try allocator.create(Function);
             errdefer allocator.destroy(self);
+
             if (comptime debug.is_trace_garbage_collector)
-                std.log.debug("{} allocate {} for {s}", .{
+                logger.debug(.default, @src(), "{} allocate {} for {s}", .{
                     @intFromPtr(&self),
                     @sizeOf(Function),
                     @typeName(Function),
@@ -46,30 +55,60 @@ pub const Stmt = union(enum) {
     };
 
     /// "If  : Expr condition, Stmt thenBranch," + " Stmt elseBranch",
+    // See [dangling else problem](https://en.wikipedia.org/wiki/Dangling_else).
+    // Solution: " `else` is bound to the nearest `if` that precedes it. "
+    // See https://craftinginterpreters.com/appendix-ii.html#if-statement
     pub const If = struct {
         condition: *Expr,
-        // See [dangling else problem](https://en.wikipedia.org/wiki/Dangling_else).
-        // Solution: " `else` is bound to the nearest `if` that precedes it. "
-        // See https://craftinginterpreters.com/appendix-ii.html#if-statement
         else_branch: ?*Stmt,
         then_branch: *Stmt,
+
+        comptime {
+            assert(@sizeOf(@This()) == 24);
+            assert(@alignOf(@This()) == 8);
+        }
     };
 
     pub const Return = struct {
         keyword: Token,
         value: ?*Expr,
+
+        comptime {
+            assert(@sizeOf(@This()) == 64);
+            assert(@alignOf(@This()) == 8);
+        }
     };
 
     pub const Var = struct {
         initializer: ?*Expr,
         name: Token,
+
+        comptime {
+            assert(@sizeOf(@This()) == 64);
+            assert(@alignOf(@This()) == 8);
+        }
     };
 
     pub const While = struct {
         body: *Stmt,
         condition: *Expr,
+
+        comptime {
+            assert(@sizeOf(@This()) == 16);
+            assert(@alignOf(@This()) == 8);
+        }
     };
+
+    /// Converts union value to a string literal representing the name.
+    pub fn toString(self: Stmt) []const u8 {
+        return @tagName(self);
+    }
 };
+
+test "basic usage" {
+    try testing.expectEqual(0, @sizeOf(@This()));
+    try testing.expectEqual(1, @alignOf(@This()));
+}
 
 // See https://craftinginterpreters.com/appendix-ii.html#statements
 //

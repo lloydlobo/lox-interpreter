@@ -1,0 +1,38 @@
+print "file: test.lox";
+
+
+fun global_function() {
+    print "in global_function";
+}
+
+global_function();
+
+
+{
+    print "in a block";
+
+    fun bar_function() {
+        print "in bar_function.. that is inside a block";
+    }
+
+    bar_function();
+}
+
+
+fun foo_function() {
+    print "in foo_function";
+
+    fun bar_function() {
+        print "in bar_function.. that is inside foo_function";
+    }
+
+    bar_function();
+}
+
+foo_function();
+
+
+// see `:h modeline`
+// vim: set commentstring=//\ %s :
+// vim: set filetype=c :
+// vim: set sts=4 sw=4 et :

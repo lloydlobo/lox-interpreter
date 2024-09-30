@@ -1,8 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
 
-const prog = @import("main.zig");
-const run = prog.run;
+const main = @import("main.zig");
+const root = @import("root.zig");
 
 const TestCase = struct {
     name: []const u8,
@@ -592,7 +592,7 @@ test "Test Scanning -> function run -> command: tokenize" {
     for (test_cases) |tc| {
         var buf: [1024 * 2]u8 = undefined;
         var w = std.io.fixedBufferStream(&buf);
-        const exit_code = try run(w.writer(), "tokenize", tc.input);
+        const exit_code = try main.run(w.writer(), "tokenize", tc.input);
 
         const actual = w.getWritten();
 
@@ -616,7 +616,7 @@ test "Test Scanning -> function run -> command: tokenize" {
 const TestCaseLexicalErrors = struct {
     name: []const u8,
     input: []const u8,
-    expected: u8 = @intFromEnum(prog.ErrorCode.syntax_error),
+    expected: u8 = @intFromEnum(root.ErrorCode.syntax_error),
 
     pub fn format(self: TestCaseLexicalErrors, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try std.fmt.format(writer, "Test Case: {any}\nInput:\n{any}\nExpected:\n{any}", .{
@@ -717,7 +717,7 @@ test "Errors for Scanning -> function run -> command: tokenize" {
         var buf: [1024]u8 = undefined;
         var w = std.io.fixedBufferStream(&buf);
 
-        const actual = try run(w.writer(), "tokenize", tc.input);
+        const actual = try main.run(w.writer(), "tokenize", tc.input);
 
         testing.expectEqual(tc.expected, actual) catch |err| {
             std.log.err("{}\n\t{}\nActual:\n{}\n", .{ err, tc, actual });

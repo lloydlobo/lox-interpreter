@@ -8,6 +8,54 @@ const Allocator = mem.Allocator;
 
 const debug = @import("debug.zig");
 
+// TODO:
+//
+// -> Property based testing
+
+// Type system context:
+//
+// -> User vs Guardian
+// -> User vs Student
+
+pub const ErrorCode = enum(u8) {
+    exit_success = 0,
+    exit_failure = 1,
+    syntax_error = 65,
+    runtime_error = 70,
+
+    pub fn fromInt(error_code: u8) ?ErrorCode {
+        return inline for (comptime std.meta.fields(ErrorCode)) |field| {
+            const code: u8 = @intFromEnum(@field(ErrorCode, field.name));
+            if (error_code == code) {
+                return @field(ErrorCode, field.name);
+            }
+        } else null;
+    }
+
+    // NOTE: Could use format but need default formatter to print enum as whole
+    pub inline fn toString(comptime self: ErrorCode) []const u8 {
+        comptime {
+            return switch (self) {
+                .exit_success => "exit success",
+                .exit_failure => "exit failure",
+                .syntax_error => "syntax error",
+                .runtime_error => "runtime error",
+            };
+        }
+    }
+};
+
+pub const debug_trace_flags: [8]bool = .{
+    debug.is_trace_compiler,
+    debug.is_trace_environment,
+    debug.is_trace_garbage_collector,
+    debug.is_trace_interpreter,
+    debug.is_trace_parser,
+    debug.is_trace_resolver,
+    debug.is_trace_scanner,
+    debug.is_trace_virtual_machine,
+};
+
 // ANSI color codes
 const COLOR_RESET = "\x1b[0m";
 const COLOR_BOLD = "\x1b[1m";
@@ -33,49 +81,73 @@ comptime {
     assert(1 << 12 == 4096);
 }
 
-const debug_trace_flags: [7]bool = .{
-    debug.is_trace_compiler,
-    debug.is_trace_environment,
-    debug.is_trace_garbage_collector,
-    debug.is_trace_interpreter,
-    debug.is_trace_parser,
-    debug.is_trace_scanner,
-    debug.is_trace_virtual_machine,
-};
+pub fn tracesrcLog(
+    comptime message_level: std.log.Level,
+    comptime src: std.builtin.SourceLocation,
+    comptime fmt: []const u8,
+    args: anytype,
+) void {
+    const src_fmt = "{s}{s}:{s}{s}:{d}{s}{s}:{d}{s}";
 
+    const src_args = .{ COLOR_WHITE, src.file, COLOR_BOLD, src.fn_name, src.line, COLOR_RESET, COLOR_WHITE, src.column, COLOR_RESET };
+    const message_color = switch (message_level) {
+        .err => COLOR_RED,
+        .warn => COLOR_YELLOW,
+        .debug => COLOR_CYAN,
+        .info => COLOR_GREEN,
+    };
+    const args_fmt = "\n" ++
+        COLOR_YELLOW ++ "└─ " ++ message_color ++ fmt ++ COLOR_RESET;
+
+    var buffer: [1 << 11]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    const writer = stream.writer();
+    std.fmt.format(writer, src_fmt, src_args) catch |err| exit(.exit_failure, "{}", .{err});
+    std.fmt.format(writer, args_fmt, args) catch |err| exit(.exit_failure, "{}", .{err});
+
+    const pos = writer.context.*.getPos() catch |err| exit(.exit_failure, "{}", .{err});
+    std.log.defaultLog(message_level, std.log.default_log_scope, "{s}", .{buffer[0..pos]});
+}
+
+/// NOTE: Manually change std.log.debug to std.log.warn to log in tests.
 /// NOTE: `@src() std.builtin.SourceLocation` ─ Must be called in a function.
 pub fn tracesrc(comptime src: anytype, comptime fmt: []const u8, args: anytype) void {
     if (comptime any(bool, debug_trace_flags, null)) {
-        const src_fmt = "{s}{s}:{s}:{d}:{d}{s}";
-        const src_args = .{ COLOR_GREEN, src.file, src.fn_name, src.line, src.column, COLOR_RESET };
-        const args_fmt = "\n\t" ++ COLOR_YELLOW ++ "└─ " ++ COLOR_CYAN ++ fmt ++ COLOR_RESET;
+        const src_fmt = "{s}{s}:{s}{s}:{d}{s}{s}:{d}{s}";
+        const src_args = .{ COLOR_WHITE, src.file, COLOR_BOLD, src.fn_name, src.line, COLOR_RESET, COLOR_WHITE, src.column, COLOR_RESET };
+        const args_fmt = "\n" ++ COLOR_YELLOW ++ "└─ " ++ COLOR_CYAN ++ fmt ++ COLOR_RESET;
 
         var buffer: [1 << 11]u8 = undefined;
         var stream = std.io.fixedBufferStream(&buffer);
-        const writer = stream.writer();
-        std.fmt.format(writer, src_fmt, src_args) catch |err| exit(1, "{}", .{err});
-        std.fmt.format(writer, args_fmt, args) catch |err| exit(1, "{}", .{err});
 
-        const pos = writer.context.*.getPos() catch |err| exit(1, "{}", .{err});
+        const writer = stream.writer();
+        std.fmt.format(writer, src_fmt, src_args) catch |err| exit(.exit_failure, "{}", .{err});
+        std.fmt.format(writer, args_fmt, args) catch |err| exit(.exit_failure, "{}", .{err});
+
+        const pos = writer.context.*.getPos() catch |err| exit(.exit_failure, "{}", .{err});
         std.log.debug("{s}", .{buffer[0..pos]});
     }
 }
 
 // Copied from gitlab.com/andreorst/lox
-pub fn exit(status: u8, comptime fmt: []const u8, args: anytype) noreturn {
+pub fn exit(status: ErrorCode, comptime fmt: []const u8, args: anytype) noreturn {
     eprint(fmt, args);
-    std.process.exit(status);
+    std.process.exit(@intFromEnum(status));
 }
 
 // See also https://stackoverflow.com/a/74187657
 pub fn print(comptime fmt: []const u8, args: anytype) void {
-    const w = std.io.getStdOut().writer();
-    w.print(fmt, args) catch |err| exit(100, "Failed to write to stdout: {}", .{err});
+    const writer = std.io.getStdOut().writer();
+    writer.print(fmt, args) catch |err| {
+        exit(.runtime_error, "Failed to write to stdout: {}", .{err});
+    };
 }
 
 pub fn eprint(comptime fmt: []const u8, args: anytype) void {
-    const w = std.io.getStdErr().writer();
-    w.print(fmt, args) catch |err| exit(100, "Failed to write to stdout: {}", .{err});
+    const writer = std.io.getStdErr().writer();
+    writer.print(fmt, args) catch |err| {
+        exit(.runtime_error, "Failed to write to stdout: {}", .{err});
+    };
 }
 
 pub fn stdout() std.fs.File {
@@ -86,10 +158,23 @@ pub fn stderr() std.fs.File {
     return std.io.getStdErr();
 }
 
-pub fn isAlphaNumeric(c: u8) bool {
+pub fn printStringHashMap(map: anytype) void {
+    print("StringHashMap(anytype) {{\n", .{});
+
+    var it = map.iterator();
+    while (it.next()) |entry| {
+        const key = entry.key_ptr.*;
+        const value = entry.value_ptr.*;
+        print("    {{ '{s}' = {any}, }}\n", .{ key, value });
+    }
+
+    print("\n}}\n", .{});
+}
+
+pub inline fn isAlphaNumeric(c: u8) bool {
     return switch (c) {
         '_', 'a'...'z', 'A'...'Z', '0'...'9' => true,
-        else => false,
+        inline else => false,
     };
 }
 
@@ -125,14 +210,22 @@ pub const LoxError = error{
 /// [See also](https://github.com/ziglang/zig/blob/7b5d139fd30a7225f073125b8a53e51a2454d223/lib/std/json.zig#L2811)
 pub fn unionPayloadPtr(comptime T: type, union_ptr: anytype) ?*T {
     const U = @typeInfo(@TypeOf(union_ptr)).Pointer.child;
+
     const info = @typeInfo(U).Union;
+
     inline for (info.fields, 0..) |u_field, i| {
-        if (u_field.type != T) continue;
-        if (@intFromEnum(union_ptr.*) == i) return &@field(union_ptr, u_field.name);
+        if (u_field.type != T) {
+            continue;
+        }
+
+        if (@intFromEnum(union_ptr.*) == i) {
+            return &@field(union_ptr, u_field.name);
+        }
     }
 
     return null;
 }
+
 test "unionPayloadPtr" {
     const Tagged = union(enum) {
         A: i32,
@@ -155,20 +248,32 @@ test "unionPayloadPtr" {
 /// Causes compile error when items do not have a known length.
 pub inline fn any(comptime T: type, comptime items: anytype, comptime predicateFn: ?fn (T) bool) bool {
     return comptime blk: {
-        if (std.meta.Elem(@TypeOf(items)) != T)
+        if (std.meta.Elem(@TypeOf(items)) != T) {
             @compileError("items must be indexable (e.g., array or slice)");
-        if (items.len == 0) // FIXME: This only tests for .{} slices and not dynamically memory allocated ones
+        }
+        // FIXME: Only checks .{} slices and not memory allocated ones.
+        if (items.len == 0) {
             @compileError("items must have a known length");
+        }
         for (items) |item| {
             if (predicateFn) |predicate| {
-                if (predicate(item)) break :blk true;
+                if (predicate(item)) {
+                    break :blk true;
+                }
             } else switch (T) {
-                bool => if (item) break :blk true,
+                bool => {
+                    if (item) {
+                        break :blk true;
+                    }
+                },
                 inline else => break :blk false,
             }
-        } else break :blk false;
+        } else {
+            break :blk false;
+        }
     };
 }
+
 test "any ─ basic usage" {
     // zig fmt: off
     {
@@ -253,4 +358,3 @@ test "any ─ with empty array" { // This test should fail to compile
 //     pub fn write(self: *Writer, bytes: []const u8) anyerror!usize {
 //         return self.writeFn(self, bytes);
 //     }
-// };

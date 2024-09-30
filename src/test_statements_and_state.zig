@@ -1,9 +1,9 @@
 const std = @import("std");
 const testing = std.testing;
 
-const prog = @import("main.zig");
-const Command = prog.Command;
-const ErrorCode = prog.ErrorCode;
+const main = @import("main.zig");
+const Command = @import("main.zig").Command;
+const ErrorCode = @import("root.zig").ErrorCode;
 
 const skip_test = true;
 
@@ -38,8 +38,8 @@ fn testStatementsAndState(comptime input: []const u8, comptime expected: []const
     // writer isn't stdout_writer (test examples work when running)
     var writer = std.io.fixedBufferStream(&buf);
 
-    const expected_exitcode = @intFromEnum(ErrorCode.no_error);
-    const actual_exitcode: u8 = try prog.run(writer.writer(), Command.run.toString(), input);
+    const expected_exitcode = @intFromEnum(ErrorCode.exit_success);
+    const actual_exitcode: u8 = try main.run(writer.writer(), Command.run.toString(), input);
     testing.expectEqual(expected_exitcode, actual_exitcode) catch |err|
         std.debug.print("{0any}\nInput: {1s}\nExpected: {2d}\nActual: {3d}\n", .{
         err,
@@ -63,7 +63,7 @@ fn testStatementsAndStateErrors(comptime input: []const u8, expected: u8) !void 
     var writer = std.io.fixedBufferStream(&buf);
     const w = writer.writer();
 
-    const actual = try prog.run(w, Command.run.toString(), input); //> exit code
+    const actual = try main.run(w, Command.run.toString(), input); //> exit code
     testing.expectEqual(expected, actual) catch |err|
         std.debug.print("{0any}\nInput: {1s}\nExpected: {2d}\nActual: {3d}\n", .{
         err,
@@ -72,6 +72,13 @@ fn testStatementsAndStateErrors(comptime input: []const u8, expected: u8) !void 
         actual,
     });
 }
+
+//
+//
+// COMPILE TIME TESTS
+//
+//
+//
 
 test "Statements & State - Print: Generate output" {
     const test_cases = [_][2][]const u8{
@@ -218,188 +225,199 @@ test "Statements & State - Syntax Errors" {
         // Operands must be numbers.
         // [line 2]
     };
+
     const expected: u8 = @intFromEnum(ErrorCode.syntax_error);
     inline for (test_cases) |tc| try testStatementsAndStateErrors(tc, expected);
 }
 
+//
+//
+// RUNTIME TESTS
+//
+//
+//
+
 test "Statements & State - Variables: Initialize variables" {
-    if (skip_test) return error.skip;
+    if (comptime !skip_test) {
+        const test_cases = [_][2][]const u8{
+            .{
+                \\var baz;
+                \\print baz;
+                ,
+                \\nil
+            },
+            .{
+                \\var world 
+                \\var baz;
+                \\print baz;
+                ,
+                \\nil
+            },
+            .{
+                \\var hello 
+                \\var bar;
+                \\var quz;
+                \\print bar;
+                ,
+                \\nil
+            },
+            .{
+                \\var quz = 73 + 26 * 20;
+                \\print quz;
+                \\var hello = 26 * 20;
+                \\print quz + hello;
+                \\var foo;
+                \\print foo;
+                ,
+                \\593
+                \\1113
+                \\nil
+            },
+        };
 
-    const test_cases = [_][2][]const u8{
-        .{
-            \\var baz;
-            \\print baz;
-            ,
-            \\nil
-        },
-        .{
-            \\var world 
-            \\var baz;
-            \\print baz;
-            ,
-            \\nil
-        },
-        .{
-            \\var hello 
-            \\var bar;
-            \\var quz;
-            \\print bar;
-            ,
-            \\nil
-        },
-        .{
-            \\var quz = 73 + 26 * 20;
-            \\print quz;
-            \\var hello = 26 * 20;
-            \\print quz + hello;
-            \\var foo;
-            \\print foo;
-            ,
-            \\593
-            \\1113
-            \\nil
-        },
-    };
-
-    inline for (test_cases) |tc| try testStatementsAndState(tc[0], tc[1]);
+        inline for (test_cases) |tc| try testStatementsAndState(tc[0], tc[1]);
+    }
 }
 
 test "Statements & State - Variables: Redeclare variables" {
-    if (skip_test) return error.skip;
+    if (comptime !skip_test) {
+        const test_cases = [_][2][]const u8{
+            .{
+                \\var foo = "before";
+                \\print foo;
+                \\var foo = "after";
+                \\print foo;
+                ,
+                \\before
+                \\after
+            },
+            .{
+                \\var foo = "after";
+                \\var foo = "before";
+                \\var foo = foo;
+                \\print foo;
+                ,
+                \\before
+            },
+            .{
+                \\var hello = 2;
+                \\print hello;
+                \\var hello = 3;
+                \\print hello;
+                \\var world = 5;
+                \\print world;
+                \\var hello = world;
+                \\print hello;
+                ,
+                \\2
+                \\3
+                \\5
+                \\5
+            },
+        };
 
-    const test_cases = [_][2][]const u8{
-        .{
-            \\var foo = "before";
-            \\print foo;
-            \\var foo = "after";
-            \\print foo;
-            ,
-            \\before
-            \\after
-        },
-        .{
-            \\var foo = "after";
-            \\var foo = "before";
-            \\var foo = foo;
-            \\print foo;
-            ,
-            \\before
-        },
-        .{
-            \\var hello = 2;
-            \\print hello;
-            \\var hello = 3;
-            \\print hello;
-            \\var world = 5;
-            \\print world;
-            \\var hello = world;
-            \\print hello;
-            ,
-            \\2
-            \\3
-            \\5
-            \\5
-        },
-    };
-
-    inline for (test_cases) |tc| try testStatementsAndState(tc[0], tc[1]);
+        inline for (test_cases) |tc| try testStatementsAndState(tc[0], tc[1]);
+    }
 }
 
 test "Statements & State - Block Syntax" {
-    const test_cases = [_][2][]const u8{
-        .{
-            \\{
-            \\    var hello = "baz";
-            \\    print hello;
-            \\}
-            ,
-            \\baz
-        },
-        .{
-            \\{
-            \\    var world = "before";
-            \\    print world;
-            \\}
-            \\{
-            \\    var world = "after";
-            \\    print world;
-            \\}
-            ,
-            \\before
-            \\after
-        },
-        .{
-            \\{
-            \\    var hello = 88;
-            \\    {
-            \\        var foo = 88;
-            \\        print foo;
-            \\    }
-            \\    print hello;
-            \\}
-            ,
-            \\88
-            \\88
-        },
-    };
+    if (comptime !skip_test) {
+        const test_cases = [_][2][]const u8{
+            .{
+                \\{
+                \\    var hello = "baz";
+                \\    print hello;
+                \\}
+                ,
+                \\baz
+            },
+            .{
+                \\{
+                \\    var world = "before";
+                \\    print world;
+                \\}
+                \\{
+                \\    var world = "after";
+                \\    print world;
+                \\}
+                ,
+                \\before
+                \\after
+            },
+            .{
+                \\{
+                \\    var hello = 88;
+                \\    {
+                \\        var foo = 88;
+                \\        print foo;
+                \\    }
+                \\    print hello;
+                \\}
+                ,
+                \\88
+                \\88
+            },
+        };
 
-    inline for (test_cases) |tc| try testStatementsAndState(tc[0], tc[1]);
+        inline for (test_cases) |tc| try testStatementsAndState(tc[0], tc[1]);
+    }
 }
 
 test "Statements & State - Variables: Runtime Errors" {
-    const test_cases = [_][]const u8{
-        \\print 34;
-        \\print x;
-        ,
-        //
-        // Undefined variable 'x'.
-        // [line 2]
-        // 3\4
+    if (comptime !skip_test) {
+        const test_cases = [_][]const u8{
+            \\print 34;
+            \\print x;
+            ,
+            //
+            // Undefined variable 'x'.
+            // [line 2]
+            // 3\4
 
-        \\var foo = 69;
-        \\print hello;
-        ,
-        //
-        // Undefined variable 'hello'.
-        // [line 2]
+            \\var foo = 69;
+            \\print hello;
+            ,
+            //
+            // Undefined variable 'hello'.
+            // [line 2]
 
-        \\var hello = 29;
-        \\var result = (hello + quz) / bar;
-        \\print result;
-        ,
-        //
-        // Undefined variable 'quz'.
-        // [line 2]
+            \\var hello = 29;
+            \\var result = (hello + quz) / bar;
+            \\print result;
+            ,
+            //
+            // Undefined variable 'quz'.
+            // [line 2]
 
-        \\var bar = 70;
-        \\var foo = 91;
-        \\var quz = 50;
-        \\print bar + foo + quz + hello; print 13;
-        ,
-        //
-        // Undefined variable 'hello'.
-        // [line 4]
+            \\var bar = 70;
+            \\var foo = 91;
+            \\var quz = 50;
+            \\print bar + foo + quz + hello; print 13;
+            ,
+            //
+            // Undefined variable 'hello'.
+            // [line 4]
 
-        \\var world = hello;
-        \\
-        ,
-        //
-        // Undefined variable 'hello'.
+            \\var world = hello;
+            \\
+            ,
+            //
+            // Undefined variable 'hello'.
 
-        // "Statements & State - Variables: Block syntax"
+            // "Statements & State - Variables: Block syntax"
 
-        \\{
-        \\    var bar = 11;
-        \\    var world = 11;
-        \\    {
-        \\        print bar + world;
-        \\}
-        ,
-        //
-        // [line 6] Error at end: Expect '}' after block.
-    };
+            \\{
+            \\    var bar = 11;
+            \\    var world = 11;
+            \\    {
+            \\        print bar + world;
+            \\}
+            ,
+            //
+            // [line 6] Error at end: Expect '}' after block.
+        };
 
-    if (false) { // DISABLED: as returning runtime error seems buggy
+        // DISABLED: as returning runtime error seems buggy
         inline for (test_cases) |tc| try testStatementsAndStateErrors(tc, @intFromEnum(ErrorCode.runtime_error));
     }
 }

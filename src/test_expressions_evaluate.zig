@@ -1,7 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
 
-const prog = @import("main.zig");
+const main = @import("main.zig");
+const root = @import("root.zig");
 
 // See also https://github.com/munificent/craftinginterpreters/tree/01e6f5b8f3e5dfa65674c2f9cf4700d73ab41cf8/test/expressions
 
@@ -15,7 +16,7 @@ fn testEvaluatingExpressions(comptime expected: []const u8, comptime input: []co
     var buf: [1024]u8 = undefined;
     var writer = std.io.fixedBufferStream(&buf);
 
-    const exitcode: u8 = try prog.run(writer.writer(), "evaluate", input);
+    const exitcode: u8 = try main.run(writer.writer(), "evaluate", input);
     testing.expectEqual(0, exitcode) catch |err|
         std.debug.print("{any}\nInput: {s}\nExpected: {d}\n", .{ err, input, 0 });
 
@@ -119,7 +120,7 @@ test "Evaluating Expressions - Equality Operators" {
 //
 
 const TestCaseRuntimeErrors = struct {
-    expected: u8 = @intFromEnum(prog.ErrorCode.runtime_error),
+    expected: u8 = @intFromEnum(root.ErrorCode.runtime_error),
     input: []const u8,
 };
 
@@ -130,7 +131,7 @@ fn testEvaluatingExpressionsRuntimeErrors(tc: TestCaseRuntimeErrors, comptime ex
     var buf: [1024]u8 = undefined;
     var writer = std.io.fixedBufferStream(&buf);
 
-    const actual_exitcode: u8 = try prog.run(writer.writer(), "evaluate", tc.input);
+    const actual_exitcode: u8 = try main.run(writer.writer(), "evaluate", tc.input);
     testing.expectEqual(tc.expected, actual_exitcode) catch |err|
         std.debug.print("{0any}\nInput: {1s}\nExpected: {2d}\nActual: {3d}\n", .{
         err,

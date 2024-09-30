@@ -1,17 +1,17 @@
 //! `FunctionContext` implements `LoxFunction` with `makeLoxFunction(...)`.
 
 const std = @import("std");
+const assert = std.debug.assert;
+const testing = std.testing;
 const mem = std.mem;
 const Allocator = mem.Allocator;
-const assert = std.debug.assert;
 
 const Environment = @import("environment.zig");
-const ErrorCode = @import("main.zig").ErrorCode;
 const Expr = @import("expr.zig").Expr;
-const Value = Expr.Value;
-const LoxFunction = Value.LoxFunction;
 const Interpreter = @import("interpreter.zig");
+const LoxFunction = Value.LoxFunction;
 const Stmt = @import("stmt.zig").Stmt;
+const Value = @import("expr.zig").Expr.Value;
 const root = @import("root.zig");
 const runtimeError = @import("main.zig").runtimeError;
 
@@ -22,17 +22,26 @@ allocator: Allocator,
 closure: *Environment,
 declaration: Stmt.Function,
 
-pub fn handleRuntimeError(self: *FunctionContext, err: Interpreter.Error) void {
+comptime {
+    assert(@sizeOf(@This()) == 112);
+    assert(@alignOf(@This()) == 8);
+}
+
+fn handleRuntimeError(self: *FunctionContext, err: Interpreter.Error) void {
     root.eprint("Error in function: '{s}': ", .{self.declaration.name.lexeme});
-    Interpreter.handleRuntimeError(err) catch |e| root.exit(@intFromEnum(ErrorCode.runtime_error), "{any}.", .{e});
+    Interpreter.handleRuntimeError(err) catch |e| root.exit(.runtime_error, "{any}.", .{e});
 }
 
-pub fn handleRuntimeErrorAndExit(self: *FunctionContext, err: Interpreter.Error) noreturn {
+fn handleRuntimeErrorAndExit(self: *FunctionContext, err: Interpreter.Error) noreturn {
     self.handleRuntimeError(err);
-    root.exit(@intFromEnum(ErrorCode.runtime_error), "{any}", .{err});
+    root.exit(.runtime_error, "{any}", .{err});
 }
 
-pub fn makeLoxFunction(allocator: Allocator, declaration: Stmt.Function, closure: *Environment) Allocator.Error!*LoxFunction {
+pub fn makeLoxFunction(
+    allocator: Allocator,
+    declaration: Stmt.Function,
+    closure: *Environment,
+) Allocator.Error!*LoxFunction {
     const context = try allocator.create(FunctionContext);
     errdefer allocator.destroy(context);
     context.* = .{ // `this` or `self` of `FunctionContext`
@@ -73,9 +82,8 @@ fn callFn(context: *anyopaque, interpreter: *Interpreter, arguments: []Value) Va
         .{ .existing = environment },
         root.stdout().writer(),
     ) catch |err| switch (err) {
-        error.Return => {
-            assert(Interpreter.runtime_error == error.Return and
-                Interpreter.runtime_token.type == .@"return");
+        error.@"return" => {
+            assert(Interpreter.runtime_error == error.@"return" and Interpreter.runtime_token.type == .@"return");
             defer {
                 Interpreter.runtime_error = undefined;
                 Interpreter.runtime_return_value = undefined;
@@ -103,3 +111,22 @@ fn toStringFn(context: *anyopaque) []const u8 {
 
     return buffer;
 }
+
+test "basic usage" {
+    try testing.expectEqual(112, @sizeOf(@This()));
+    try testing.expectEqual(8, @alignOf(@This()));
+}
+
+//
+//
+// Docs
+//
+//
+//
+
+// makeLoxFunction()
+// When we create a LoxFunction, we capture the current environment. This is
+// the environment that is active when the function is declared not when it’s
+// called, which is what we want. It represents the lexical scope surrounding
+// the function declaration. Finally, when we call the function, we use that
+// environment as the call’s parent instead of going straight to globals.

@@ -1,7 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
 
-const prog = @import("main.zig");
+const main = @import("main.zig");
+const root = @import("root.zig");
 
 // see also https://app.codecrafters.io/courses/interpreter/stages/sc2?repo=22d0aedc-438f-4a1e-a88c-5736eb7b71db
 
@@ -15,7 +16,7 @@ fn testParsingExpressions(comptime expected: []const u8, comptime input: []const
     var buf: [1024]u8 = undefined;
     var writer = std.io.fixedBufferStream(&buf);
 
-    const exitcode = try prog.run(writer.writer(), "parse", input);
+    const exitcode = try main.run(writer.writer(), "parse", input);
     const actual = writer.getWritten();
 
     try testing.expectEqualStrings(expected, actual);
@@ -144,7 +145,7 @@ test "Parsing expressions - Equality operators" {
 //
 
 const TestCaseSyntaxErrors = struct {
-    expected: u8 = @intFromEnum(prog.ErrorCode.syntax_error),
+    expected: u8 = @intFromEnum(root.ErrorCode.syntax_error),
     input: []const u8,
 };
 
@@ -152,7 +153,7 @@ fn testParsingExpressionsSyntaxErrors(comptime expected: u8, comptime input: []c
     var buf: [1024]u8 = undefined;
     var writer = std.io.fixedBufferStream(&buf);
 
-    const exitcode = try prog.run(writer.writer(), "parse", input);
+    const exitcode = try main.run(writer.writer(), "parse", input);
     try testing.expectEqual(expected, exitcode);
 }
 
