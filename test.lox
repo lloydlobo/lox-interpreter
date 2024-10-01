@@ -6,9 +6,14 @@ class Bagel {};
 
 var bagel = Bagel();
 print bagel; // Prints "Bagel instance".
+// bagel.hello;
 // bagel(); // visitCallExpr : .instance => ...
 
+fun nilcheck() {
+    return nil;
+}
 
+print nilcheck();
 
 // Invalid return errors
 // return "at top level";

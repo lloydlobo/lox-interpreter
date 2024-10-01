@@ -135,6 +135,7 @@ pub const TypeSets = struct {
     pub const class = &TypeSet.initOne(.class);
     pub const comma = &TypeSet.initOne(.comma);
     pub const declaration = &TypeSet.initOne(.equal);
+    pub const dot = &TypeSet.initOne(.dot);
     pub const @"else" = &TypeSet.initOne(.@"else");
     pub const @"false" = &TypeSet.initOne(.false);
     pub const @"for" = &TypeSet.initOne(.@"for");

@@ -12,6 +12,7 @@ const Scanner = @import("scanner.zig").Scanner;
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
 const TypeSets = @import("token.zig").TypeSets;
+const Value = @import("value.zig").Value;
 const debug = @import("debug.zig");
 const root = @import("root.zig");
 const tokenError = @import("main.zig").tokenError;
@@ -118,7 +119,7 @@ fn previousType(self: *const Parser) Token.Type {
     return self.tokens.items(.type)[self.current - 1];
 }
 
-fn previousValue(self: *const Parser) Expr.Value {
+fn previousValue(self: *const Parser) Value {
     return if (self.previousLiteral()) |literal| switch (literal) {
         .str => |val| .{ .str = val },
         .num => |val| .{ .num = val },
@@ -169,13 +170,13 @@ fn advance(self: *Parser) Token {
 /// primary → NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" ;
 fn primary(self: *Parser) Error!*Expr {
     if (self.match(TypeSets.false)) {
-        return try self.createExpr(.{ .literal = Expr.Value.False });
+        return try self.createExpr(.{ .literal = Value.False });
     }
     if (self.match(TypeSets.true)) {
-        return try self.createExpr(.{ .literal = Expr.Value.True });
+        return try self.createExpr(.{ .literal = Value.True });
     }
     if (self.match(TypeSets.nil)) {
-        return try self.createExpr(.{ .literal = Expr.Value.Nil });
+        return try self.createExpr(.{ .literal = Value.Nil });
     }
     if (self.match(TypeSets.number_string)) {
         return try self.createExpr(.{ .literal = self.previousValue() });
@@ -203,9 +204,16 @@ fn call(self: *Parser) Error!*Expr {
     while (true) {
         if (self.match(TypeSets.left_paren)) {
             expr = try self.finishCall(expr);
-        } else if (self.match(TypeSets.left_paren)) {
-            const name: Token = try self.consume(.identifier, "Expect property name after '.'.");
-            expr = try self.createExpr(.{ .get = .{ .name = name, .value = expr } });
+        } else if (self.match(TypeSets.dot)) {
+            const name: Token = try self.consume(
+                .identifier,
+                "Expect property name after '.'.",
+            );
+            expr = try self.createExpr(.{ .get = .{
+                .name = name,
+                .value = expr,
+            } });
+
         } else {
             break;
         }

@@ -9,8 +9,8 @@ const Allocator = mem.Allocator;
 const Environment = @import("environment.zig");
 const InstanceContext = @import("loxinstance.zig");
 const Interpreter = @import("interpreter.zig");
-const LoxClass = @import("expr.zig").Expr.Value.LoxClass;
-const Value = @import("expr.zig").Expr.Value;
+const LoxClass = @import("value.zig").Value.LoxClass;
+const Value = @import("value.zig").Value;
 const root = @import("root.zig");
 const main = @import("main.zig");
 

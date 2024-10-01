@@ -12,7 +12,7 @@ define generate_sources
 endef # or use `$(shell find src -name '*.zig')`
 
 TEST_FILE := test.lox
-TRACE_FLAGS :=  -freference-trace
+TRACE_FLAGS := -freference-trace
 VALGRIND := valgrind --leak-check=full --show-leak-kinds=all -s --track-origins=yes
 ZIG_FILES := $(call generate_sources)
 ZIG_SRCS := $(shell find src -name '*.zig' -not -name 'test_*.zig')
@@ -73,23 +73,23 @@ test: $(ZIG_SRCS)
 
 tokenize:
 	@make ast-check
-	@zig build --summary all
-	@$(EXE) tokenize test.lox && echo
+	@zig build --summary all $(TRACE_FLAGS)
+	$(EXE) tokenize test.lox $(TRACE_FLAGS) && echo
 
 parse:
 	@make ast-check
-	@zig build --summary all
-	@$(EXE) parse test.lox && echo
+	@zig build --summary all $(TRACE_FLAGS)
+	$(EXE) parse test.lox $(TRACE_FLAGS) && echo
 
 evaluate:
 	@make ast-check
-	@zig build --summary all
-	@$(EXE) evaluate test.lox && echo
+	@zig build --summary all $(TRACE_FLAGS)
+	$(EXE) evaluate test.lox $(TRACE_FLAGS) && echo
 
 run:
 	@make ast-check
-	@zig build --summary all
-	@$(EXE) run test.lox && echo
+	@zig build --summary all $(TRACE_FLAGS)
+	$(EXE) run test.lox $(TRACE_FLAGS) && echo
 
 
 .PHONY: valgrind-tokenize valgrind-parse valgrind-evaluate valgrind-run

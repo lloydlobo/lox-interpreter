@@ -11,7 +11,7 @@ const Expr = @import("expr.zig").Expr;
 const Interpreter = @import("interpreter.zig");
 const LoxFunction = Value.LoxFunction;
 const Stmt = @import("stmt.zig").Stmt;
-const Value = @import("expr.zig").Expr.Value;
+const Value = @import("value.zig").Value;
 const root = @import("root.zig");
 const runtimeError = @import("main.zig").runtimeError;
 

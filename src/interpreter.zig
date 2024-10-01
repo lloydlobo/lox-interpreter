@@ -10,7 +10,10 @@ const FunctionContext = @import("loxfunction.zig");
 const ClassContext = @import("loxclass.zig");
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
-const Value = @import("expr.zig").Expr.Value;
+const Value = @import("value.zig").Value;
+const ReturnValue = @import("value.zig").Value.Return;
+const Function = @import("function.zig");
+const Callable = @import("callable.zig");
 const debug = @import("debug.zig");
 const logger = @import("logger.zig");
 const main = @import("main.zig");
@@ -55,6 +58,7 @@ const RuntimeError = error{
     wrong_arity,
 
     non_instance_property,
+    undefined_property,
 };
 
 /// Not actual errors, but a way to propagate return values.
@@ -79,14 +83,44 @@ pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
     };
 
     {
-        const clock_callable = try self.allocator.create(Value.LoxCallable);
-        clock_callable.* = clockGlobalCallable;
-        self.globals.define("clock", .{ .callable = clock_callable }) catch |err| {
+        const clock = try self.allocator.create(Callable);
+        clock.* = .{
+            .allocator = self.allocator,
+            .vtable = Callable.clock_vtable,
+        };
+        self.globals.define("clock", .{ .callable = clock }) catch |err| {
             try handleRuntimeError(err);
         };
     }
+    // {
+    //     const clock_callable = try self.allocator.create(Value.LoxCallable);
+    //     clock_callable.* = clockGlobalCallable;
+    //     self.globals.define("clock", .{ .callable = clock_callable }) catch |err| {
+    //         try handleRuntimeError(err);
+    //     };
+    // }
 
     return self;
+}
+
+fn printValue(writer: anytype, value: Value) void {
+    switch (value) {
+        .bool => |@"bool"| std.fmt.format(writer, "{}", .{@"bool"}) catch {},
+        .nil => std.fmt.format(writer, "nil", .{}) catch {},
+        .num => |num| std.fmt.format(writer, "{d}", .{num}) catch {},
+        .str => |str| std.fmt.format(writer, "{s}", .{str}) catch {},
+
+        .ret => |ret| std.fmt.format(writer, "{any}", .{ret.toValue()}) catch {},
+
+        .callable => |callable| std.fmt.format(writer, "{s}", .{callable.toString() catch |err| {
+            handleRuntimeError(err) catch |e| root.exit(.runtime_error, "{any}", .{e});
+            root.exit(.runtime_error, "{any}", .{err});
+        }}) catch {},
+
+        .function => |callable_function| std.fmt.format(writer, "{s}", .{callable_function.toString()}) catch {},
+        .class => |callable_class| std.fmt.format(writer, "{s}", .{callable_class.toString()}) catch {},
+        .instance => |callable_class_instance| std.fmt.format(writer, "{s}", .{callable_class_instance.toString()}) catch {},
+    }
 }
 
 pub fn handleRuntimeError(err: Error) Allocator.Error!void {
@@ -114,6 +148,9 @@ pub fn handleRuntimeError(err: Error) Allocator.Error!void {
 
         error.non_instance_property => {
             return runtimeError(runtime_token, "Only instances have properties '{s}'.", .{runtime_token.lexeme});
+        },
+        error.undefined_property => {
+            return runtimeError(runtime_token, "Undefined propertiy '{s}'.", .{runtime_token.lexeme});
         },
 
         // PropagationException
@@ -182,22 +219,6 @@ fn isEqual(a: Value, b: Value) bool {
     }
 
     return std.meta.eql(a, b);
-}
-
-fn printValue(writer: anytype, value: Value) void {
-    switch (value) {
-        .bool => |@"bool"| std.fmt.format(writer, "{}", .{@"bool"}) catch {},
-        .nil => std.fmt.format(writer, "nil", .{}) catch {},
-        .num => |num| std.fmt.format(writer, "{d}", .{num}) catch {},
-        .str => |str| std.fmt.format(writer, "{s}", .{str}) catch {},
-
-        .ret => |ret| std.fmt.format(writer, "{any}", .{ret.toValue()}) catch {},
-
-        .callable => |callable| std.fmt.format(writer, "{s}", .{callable.toString()}) catch {},
-        .function => |callable_function| std.fmt.format(writer, "{s}", .{callable_function.toString()}) catch {},
-        .class => |callable_class| std.fmt.format(writer, "{s}", .{callable_class.toString()}) catch {},
-        .instance => |callable_class_instance| std.fmt.format(writer, "{s}", .{callable_class_instance.toString()}) catch {},
-    }
 }
 
 //
@@ -284,7 +305,7 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
                 runtime_token = call.paren;
                 break :blk Error.wrong_arity;
             }
-            break :blk callable.callFn(self, try arguments.toOwnedSlice());
+            break :blk callable.call(self, try arguments.toOwnedSlice());
         },
         .function => |function| blk: { // `Value.LoxFunction`
             if (function.arity() != args_count) {
@@ -355,7 +376,7 @@ fn visitGetExpr(self: *Self, get: Expr.Get) Error!Value {
 
     return switch (value) {
         .instance => |instance| blk: {
-            _ = instance;
+            // _ = instance;
             // If the object is a LoxInstance, then we ask it to look up the property. It must be time to give LoxInstance some actual state. A map will do fine.
             //
             //   private LoxClass klass;
@@ -374,10 +395,17 @@ fn visitGetExpr(self: *Self, get: Expr.Get) Error!Value {
             //         "Undefined property '" + name.lexeme + "'.");
             //   }
             //
-            // const out: Value = instance.get(self, get.name);
-            // break :blk out;
 
-            break :blk Value.Nil;
+            logger.warn(.default, @src(), "DOING: .class {any} for call: {s}", .{ get, instance.toString() });
+            const out: Value = instance.get(self, get.name);
+            switch (out) {
+                .nil => try handleRuntimeError(error.non_instance_property),
+                else => {},
+            }
+
+            break :blk out;
+
+            // break :blk Value.Nil;
         },
         else => blk: {
             // Note: In Lox, only class instances can have properties.
@@ -580,6 +608,13 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
                 try self.execute(else_branch, writer);
         },
         .function => |function| { // `Stmt.Function`
+            {
+                const callable_function = try Function.init(self.allocator, self.environment, function);
+                logger.warn(scoper, @src(), "{s}", .{try callable_function.callable.toString()});
+
+                // try self.environment.define(function.name.lexeme, .{ .function = &callable_function });
+            }
+
             const fun: *Value.LoxFunction = try FunctionContext.createLoxFunction(
                 self.allocator,
                 function,
@@ -593,7 +628,7 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
         },
         .return_stmt => |return_stmt| {
             const value = if (return_stmt.value) |val| try self.evaluate(val) else null;
-            runtime_return_value = Expr.LoxReturnValue.fromValue(value).ret;
+            runtime_return_value = ReturnValue.fromValue(value).ret;
             runtime_token = return_stmt.keyword;
             runtime_error = error.@"return";
             return runtime_error; // trick to propagate return values across call stack
@@ -625,23 +660,23 @@ pub fn interpretExpression(self: *Self, expr: *Expr, writer: anytype) Allocator.
     printValue(writer, value);
 }
 
-const clockGlobalCallable: Value.LoxCallable = .{
-    .arityFn = struct {
-        fn arity() usize {
-            return 0;
-        }
-    }.arity,
-    .callFn = struct {
-        fn call(_: *Interpreter, _: []Value) Value {
-            return .{ .num = (@as(f64, @floatFromInt(std.time.milliTimestamp())) / 1000.0) };
-        }
-    }.call,
-    .toStringFn = struct {
-        fn toString() []const u8 {
-            return "<native fn>";
-        }
-    }.toString,
-};
+// const clockGlobalCallable: Value.LoxCallable = .{
+//     .arityFn = struct {
+//         fn arity() usize {
+//             return 0;
+//         }
+//     }.arity,
+//     .callFn = struct {
+//         fn call(_: *Interpreter, _: []Value) Value {
+//             return .{ .num = (@as(f64, @floatFromInt(std.time.milliTimestamp())) / 1000.0) };
+//         }
+//     }.call,
+//     .toStringFn = struct {
+//         fn toString() []const u8 {
+//             return "<native fn>";
+//         }
+//     }.toString,
+// };
 
 pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!void {
     if (comptime debug.is_trace_interpreter) {
@@ -651,7 +686,7 @@ pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!vo
         }
         if (self.globals.values.get("clock")) |value| {
             const fun = value.callable;
-            assert(@TypeOf(fun) == *Value.LoxCallable);
+            assert(@TypeOf(fun) == *Value.CallableValue);
             assert((fun.arity() == 0) and mem.eql(u8, fun.toString(), "<native fn>"));
             assert(@TypeOf(fun.call(self, &[_]Value{}).num) == f64);
         }

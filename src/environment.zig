@@ -7,7 +7,7 @@ const StringHashMap = std.StringHashMap;
 
 const Token = @import("token.zig");
 const debug = @import("debug.zig");
-const Value = @import("expr.zig").Expr.Value;
+const Value = @import("value.zig").Value;
 const root = @import("root.zig");
 const logger = @import("logger.zig");
 
