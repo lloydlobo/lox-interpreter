@@ -10,6 +10,7 @@ const logger = @import("logger.zig");
 const root = @import("root.zig");
 
 const Callable = @import("callable.zig");
+const Function = @import("function.zig");
 
 pub const Value = union(enum) {
     bool: bool,
@@ -24,7 +25,7 @@ pub const Value = union(enum) {
     callable: *CallableValue,
 
     /// Extends `LoxCallable`.
-    function: *LoxFunction,
+    function: *FunctionValue,
 
     /// Extends `LoxCallable`.
     class: *LoxClass,
@@ -35,6 +36,10 @@ pub const Value = union(enum) {
         assert(@sizeOf(@This()) == 24);
         assert(@alignOf(@This()) == 8);
     }
+
+    pub const Nil = Value{ .nil = {} };
+    pub const True = Value{ .bool = true };
+    pub const False = Value{ .bool = !true };
 
     pub inline fn from(x: anytype) Value {
         return switch (@TypeOf(x)) {
@@ -61,19 +66,18 @@ pub const Value = union(enum) {
                 c.*.toString() catch |err| root.exit(.runtime_error, "{any}", .{err}),
                 c.*.arity(),
             }),
+            .function => |function| try std.fmt.format(writer, "{s}(<arity {d}>)", .{
+                function.callable.toString() catch |err| root.exit(.runtime_error, "{any}", .{err}),
+                function.callable.arity(),
+            }),
 
-            inline .function, .class, .instance => |c| try std.fmt.format(
+            inline .class, .instance => |c| try std.fmt.format(
                 writer,
                 "{s}(<arity {d}>)",
                 .{ c.*.toString(), c.*.arity() },
             ),
         }
     }
-
-    pub const CallableValue = Callable;
-    pub const Nil = Value{ .nil = {} };
-    pub const True = Value{ .bool = true };
-    pub const False = Value{ .bool = !true };
 
     pub const Return = union(enum) {
         nil: void,
@@ -98,6 +102,9 @@ pub const Value = union(enum) {
             };
         }
     };
+
+    pub const CallableValue = Callable;
+    pub const FunctionValue = Function;
 
     pub const LoxFunction = struct {
         /// `Context` pointer to hold function-specific data.

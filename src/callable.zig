@@ -16,13 +16,39 @@ const Callable = @This();
 allocator: Allocator,
 vtable: *const VTable,
 
+const builtin = @import("builtin/root.zig");
+const core = @import("core/root.zig");
+
+pub const default_vtable = builtin.default_vtable;
+pub const clock_vtable = builtin.clock_vtable;
+
 pub const AllocPrintError = error{OutOfMemory};
+pub const Error = AllocPrintError;
 
 pub const VTable = struct {
     toString: *const fn (*const Callable) AllocPrintError![]const u8,
     call: *const fn (*const Callable, *Interpreter, []Value) Value,
     arity: *const fn (*const Callable) usize,
 };
+
+/// Returns a pointer to undefined memory.
+/// Call `destroy` with the result to free the memory.
+pub fn init(allocator: Allocator) Allocator.Error!*Callable {
+    const out = try allocator.create(Callable);
+    errdefer allocator.destroy(out);
+    out.* = .{
+        .allocator = allocator,
+        .vtable = undefined,
+    };
+
+    return out;
+}
+
+/// `self` should be the return value of `create`, or otherwise
+/// have the same address and alignment property.
+pub fn destroy(self: *Callable, allocator: Allocator) void {
+    allocator.destroy(self);
+}
 
 pub fn toString(self: *const Callable) AllocPrintError![]const u8 {
     return try self.vtable.toString(self);
@@ -36,27 +62,45 @@ pub fn arity(self: *const Callable) usize {
     return self.vtable.arity(self);
 }
 
-pub const clock_vtable: *const VTable = &.{
-    .toString = struct {
-        fn toString(self: *const Callable) AllocPrintError![]const u8 {
-            _ = self; // autofix
-            return "<native fn>";
-        }
-    }.toString,
-
-    .call = struct {
-        pub fn call(_: *const Callable, _: *Interpreter, _: []Value) Value {
-            return .{ .num = (@as(f64, @floatFromInt(std.time.milliTimestamp())) / 1000.0) };
-        }
-    }.call,
-
-    .arity = struct {
-        fn arity(self: *const Callable) usize {
-            _ = self; // autofix
-            return 0;
-        }
-    }.arity,
-};
+// pub const default_vtable: *const Callable.VTable = &.{
+//     .toString = struct {
+//         fn toString(_: *const Callable) AllocPrintError![]const u8 {
+//             return "<native fn>";
+//         }
+//     }.toString,
+//     .call = struct {
+//         pub fn call(_: *const Callable, _: *Interpreter, _: []Value) Value {
+//             return Value.Nil;
+//         }
+//     }.call,
+//     .arity = struct {
+//         fn arity(_: *const Callable) usize {
+//             return 0;
+//         }
+//     }.arity,
+// };
+//
+// pub const clock_vtable: *const VTable = &.{
+//     .toString = struct {
+//         fn toString(self: *const Callable) AllocPrintError![]const u8 {
+//             _ = self; // autofix
+//             return "<native fn>";
+//         }
+//     }.toString,
+//
+//     .call = struct {
+//         pub fn call(_: *const Callable, _: *Interpreter, _: []Value) Value {
+//             return .{ .num = (@as(f64, @floatFromInt(std.time.milliTimestamp())) / 1000.0) };
+//         }
+//     }.call,
+//
+//     .arity = struct {
+//         fn arity(self: *const Callable) usize {
+//             _ = self; // autofix
+//             return 0;
+//         }
+//     }.arity,
+// };
 
 test "Callable ─ native clock function" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);

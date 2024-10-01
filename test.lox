@@ -18,7 +18,11 @@ print nilcheck();
 // Invalid return errors
 // return "at top level";
 
+print noop; //> <native fn>
+print noop(); //> nil
+
 // `clock()` is a global function baked in, just like `print()` is.
+print clock; //> <native fn>
 // Tested approx at UTC timestamp: 20240928053409UTC
 print clock(); //> 1727501631.727
 

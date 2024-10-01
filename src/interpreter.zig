@@ -20,6 +20,8 @@ const main = @import("main.zig");
 const root = @import("root.zig");
 const runtimeError = @import("main.zig").runtimeError;
 
+const builtin = @import("builtin/root.zig");
+
 const Interpreter = @This(); // File struct
 
 /// `allocator`:   The arena allocator.
@@ -70,9 +72,9 @@ const Self = @This();
 
 // TODO: Reason about the relationship between `globals` and `environment`.
 pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
-    // NOTE: Shared pointer for globals and environment. So if in current
-    // scope, when a value is put in `Interpreter.environment`, it is also
-    // pointed to globals.
+    // Shared pointer for globals and environment. So if in current scope, when
+    // a value is put in `Interpreter.environment`, it is also pointed to
+    // globals.
     const globals = try Environment.init(allocator);
 
     var self: Interpreter = .{
@@ -83,44 +85,24 @@ pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
     };
 
     {
-        const clock = try self.allocator.create(Callable);
-        clock.* = .{
-            .allocator = self.allocator,
-            .vtable = Callable.clock_vtable,
-        };
-        self.globals.define("clock", .{ .callable = clock }) catch |err| {
-            try handleRuntimeError(err);
-        };
+        const noop: *Callable = try Callable.init(self.allocator);
+        errdefer noop.destroy(self.allocator);
+        noop.*.vtable = builtin.default_vtable;
+
+        const clock: *Callable = try Callable.init(self.allocator);
+        errdefer clock.destroy(self.allocator);
+        clock.*.vtable = builtin.clock_vtable;
+
+        assert((noop.vtable.arity(noop) == 0) and mem.eql(u8, "<native fn>", try noop.vtable.toString(noop)) and
+            (noop.vtable.call(noop, &self, &.{}).nil == Value.Nil.nil));
+        assert((clock.vtable.arity(clock) == 0) and mem.eql(u8, "<native fn>", try clock.vtable.toString(clock)) and
+            (clock.vtable.call(clock, &self, &.{}).num > 0.0));
+
+        self.globals.define("noop", .{ .callable = noop }) catch |err| try handleRuntimeError(err);
+        self.globals.define("clock", .{ .callable = clock }) catch |err| try handleRuntimeError(err);
     }
-    // {
-    //     const clock_callable = try self.allocator.create(Value.LoxCallable);
-    //     clock_callable.* = clockGlobalCallable;
-    //     self.globals.define("clock", .{ .callable = clock_callable }) catch |err| {
-    //         try handleRuntimeError(err);
-    //     };
-    // }
 
     return self;
-}
-
-fn printValue(writer: anytype, value: Value) void {
-    switch (value) {
-        .bool => |@"bool"| std.fmt.format(writer, "{}", .{@"bool"}) catch {},
-        .nil => std.fmt.format(writer, "nil", .{}) catch {},
-        .num => |num| std.fmt.format(writer, "{d}", .{num}) catch {},
-        .str => |str| std.fmt.format(writer, "{s}", .{str}) catch {},
-
-        .ret => |ret| std.fmt.format(writer, "{any}", .{ret.toValue()}) catch {},
-
-        .callable => |callable| std.fmt.format(writer, "{s}", .{callable.toString() catch |err| {
-            handleRuntimeError(err) catch |e| root.exit(.runtime_error, "{any}", .{e});
-            root.exit(.runtime_error, "{any}", .{err});
-        }}) catch {},
-
-        .function => |callable_function| std.fmt.format(writer, "{s}", .{callable_function.toString()}) catch {},
-        .class => |callable_class| std.fmt.format(writer, "{s}", .{callable_class.toString()}) catch {},
-        .instance => |callable_class_instance| std.fmt.format(writer, "{s}", .{callable_class_instance.toString()}) catch {},
-    }
 }
 
 pub fn handleRuntimeError(err: Error) Allocator.Error!void {
@@ -142,8 +124,8 @@ pub fn handleRuntimeError(err: Error) Allocator.Error!void {
         error.not_callable => {
             return runtimeError(undeclared_token, "Value not callable '{s}'.", .{undeclared_token.lexeme});
         },
-        error.wrong_arity => {
-            return runtimeError(undeclared_token, "Wrong function arguments arity '{s}'.", .{undeclared_token.lexeme});
+        error.wrong_arity => { // used to use undeclared_token... but if call() is processed at runtime |> then we missed the token that errors
+            return runtimeError(undeclared_token, "Wrong function arguments arity '{s}'.", .{runtime_token.lexeme});
         },
 
         error.non_instance_property => {
@@ -167,6 +149,34 @@ pub fn handleRuntimeError(err: Error) Allocator.Error!void {
         },
 
         else => |other| return other,
+    }
+}
+
+fn printValue(writer: anytype, value: Value) void {
+    switch (value) {
+        .bool => |@"bool"| std.fmt.format(writer, "{}", .{@"bool"}) catch {},
+        .nil => std.fmt.format(writer, "nil", .{}) catch {},
+        .num => |num| std.fmt.format(writer, "{d}", .{num}) catch {},
+        .str => |str| std.fmt.format(writer, "{s}", .{str}) catch {},
+
+        .ret => |ret| std.fmt.format(writer, "{any}", .{ret.toValue()}) catch {},
+
+        .callable => |callable| std.fmt.format(writer, "{s}", .{callable.toString() catch |err| {
+            handleRuntimeError(err) catch |e| root.exit(.runtime_error, "{any}", .{e});
+            root.exit(.runtime_error, "{any}", .{err});
+        }}) catch {},
+
+        .function => |function| std.fmt.format(
+            writer,
+            "{s}",
+            .{
+                function.callable.toString() catch |err| {
+                    root.exit(.runtime_error, "{any}", .{err});
+                },
+            },
+        ) catch {},
+        .class => |callable_class| std.fmt.format(writer, "{s}", .{callable_class.toString()}) catch {},
+        .instance => |callable_class_instance| std.fmt.format(writer, "{s}", .{callable_class_instance.toString()}) catch {},
     }
 }
 
@@ -244,7 +254,6 @@ fn visitAssignExpr(self: *Self, assign: Expr.Assign) Error!Value {
                 undeclared_token = token;
                 return err_2;
             };
-
             return value; // success
         },
         else => |other| return other,
@@ -300,19 +309,21 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
     assert((arguments.items.len == args_count) and (arguments.capacity == args_count));
 
     return switch (callee) {
-        .callable => |callable| blk: { // `Value.LoxCallable` (native)
+        .callable => |callable| blk: {
             if (callable.arity() != args_count) {
-                runtime_token = call.paren;
+                runtime_token = call.paren; // options?
+                runtime_token = call.callee.variable;
                 break :blk Error.wrong_arity;
             }
             break :blk callable.call(self, try arguments.toOwnedSlice());
         },
         .function => |function| blk: { // `Value.LoxFunction`
-            if (function.arity() != args_count) {
-                runtime_token = call.paren;
+            if (function.callable.arity() != args_count) {
+                runtime_token = call.paren; // options?
+                runtime_token = call.callee.variable;
                 break :blk Error.wrong_arity;
             }
-            break :blk function.call(self, try arguments.toOwnedSlice());
+            break :blk function.callable.call(self, try arguments.toOwnedSlice());
         },
         //
         //
@@ -615,11 +626,12 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
                 // try self.environment.define(function.name.lexeme, .{ .function = &callable_function });
             }
 
-            const fun: *Value.LoxFunction = try FunctionContext.createLoxFunction(
+            const fun: *Value.FunctionValue = try Value.FunctionValue.init(
                 self.allocator,
-                function,
                 self.environment,
+                function,
             );
+            errdefer fun.destroy(self.allocator);
             try self.environment.define(function.name.lexeme, .{ .function = fun });
         },
         .print_stmt => |expr| {
