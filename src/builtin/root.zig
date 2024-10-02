@@ -18,7 +18,7 @@ pub const default_vtable: *const Callable.VTable = &.{
         }
     }.toString,
     .call = struct {
-        pub fn call(_: *const Callable, _: *Interpreter, _: []Value) Value {
+        pub fn call(_: *const Callable, _: *Interpreter, _: []Value) Callable.Error!Value {
             return Value.Nil;
         }
     }.call,
@@ -38,7 +38,7 @@ pub const clock_vtable: *const Callable.VTable = &.{
     }.toString,
 
     .call = struct {
-        pub fn call(_: *const Callable, _: *Interpreter, _: []Value) Value {
+        pub fn call(_: *const Callable, _: *Interpreter, _: []Value) Callable.Error!Value {
             return .{ .num = (@as(f64, @floatFromInt(std.time.milliTimestamp())) / 1000.0) };
         }
     }.call,

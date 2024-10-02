@@ -32,7 +32,10 @@ pub fn init(
 ) Allocator.Error!*Function {
     const self = try allocator.create(Function);
     self.* = .{
-        .callable = .{ .allocator = allocator, .vtable = &vtable },
+        .callable = .{
+            .allocator = allocator,
+            .vtable = &vtable,
+        },
         .closure = closure,
         .declaration = declaration,
     };
@@ -67,15 +70,13 @@ pub fn toString(callable: *const Callable) AllocPrintError![]const u8 {
     return buffer;
 }
 
-pub fn call(callable: *const Callable, interpreter: *Interpreter, arguments: []Value) Value {
+pub fn call(callable: *const Callable, interpreter: *Interpreter, arguments: []Value) Callable.Error!Value {
     const self: *Function = @constCast(@fieldParentPtr("callable", callable));
 
     var environment = Environment.init(callable.allocator) catch |err| {
-        Interpreter.handleRuntimeError(err) catch unreachable;
-        root.exit(.runtime_error, "Failed to initialize environment while calling '{any}': {any}", .{
-            callable.toString(),
-            err,
-        });
+        // TODO: Caller should pre-set runtime_token for error
+        // try Interpreter.handleRuntimeError(err);
+        return err;
     };
     errdefer callable.allocator.destroy(environment);
 
@@ -83,7 +84,11 @@ pub fn call(callable: *const Callable, interpreter: *Interpreter, arguments: []V
 
     for (self.declaration.parameters, 0..) |param, i| {
         self.closure.define(param.lexeme, arguments[i]) catch |err| {
-            Interpreter.handleRuntimeError(err) catch unreachable;
+            // TODO: Should the `call()` caller pre-set runtime_token for error??
+            Interpreter.runtime_token = param;
+            try Interpreter.handleRuntimeError(err);
+            // NOTE: Cannot return Environment specific errors, unless `Callable.Error` includes them
+            //   return err;
         };
     }
 
@@ -102,11 +107,10 @@ pub fn call(callable: *const Callable, interpreter: *Interpreter, arguments: []V
                 Interpreter.runtime_return_value = undefined;
                 Interpreter.runtime_token = undefined;
             }
-
             return Interpreter.runtime_return_value;
         },
         else => {
-            Interpreter.handleRuntimeError(err) catch unreachable;
+            try Interpreter.handleRuntimeError(err);
             return Value.Nil;
         },
     };

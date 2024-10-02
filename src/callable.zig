@@ -11,23 +11,28 @@ const Value = @import("value.zig").Value;
 const formatNumber = @import("root.zig").formatNumber;
 const logger = @import("logger.zig");
 
+const loxbuiltin = @import("builtin/root.zig");
+const loxcore = @import("core/root.zig");
+
 const Callable = @This();
 
 allocator: Allocator,
 vtable: *const VTable,
 
-const builtin = @import("builtin/root.zig");
-const core = @import("core/root.zig");
+comptime {
+    assert(@sizeOf(@This()) == 24);
+    assert(@alignOf(@This()) == 8);
+}
 
-pub const default_vtable = builtin.default_vtable;
-pub const clock_vtable = builtin.clock_vtable;
+pub const default_vtable = loxbuiltin.default_vtable;
+pub const clock_vtable = loxbuiltin.clock_vtable;
 
 pub const AllocPrintError = error{OutOfMemory};
-pub const Error = AllocPrintError;
+pub const Error = AllocPrintError || Allocator.Error;
 
 pub const VTable = struct {
     toString: *const fn (*const Callable) AllocPrintError![]const u8,
-    call: *const fn (*const Callable, *Interpreter, []Value) Value,
+    call: *const fn (*const Callable, *Interpreter, []Value) Allocator.Error!Value,
     arity: *const fn (*const Callable) usize,
 };
 
@@ -54,12 +59,21 @@ pub fn toString(self: *const Callable) AllocPrintError![]const u8 {
     return try self.vtable.toString(self);
 }
 
-pub fn call(self: *const Callable, interpreter: *Interpreter, arguments: []Value) Value {
-    return self.vtable.call(self, interpreter, arguments);
+pub fn call(
+    self: *const Callable,
+    interpreter: *Interpreter,
+    arguments: []Value,
+) Allocator.Error!Value {
+    return try self.vtable.call(self, interpreter, arguments);
 }
 
 pub fn arity(self: *const Callable) usize {
     return self.vtable.arity(self);
+}
+
+test "stats" {
+    try testing.expectEqual(24, @sizeOf(@This()));
+    try testing.expectEqual(8, @alignOf(@This()));
 }
 
 test "Callable ─ native clock function" {
@@ -77,7 +91,7 @@ test "Callable ─ native clock function" {
 
     try testing.expectEqualStrings("<native fn>", try clock.toString());
 
-    const actual: f64 = clock.call(&interpreter, arguments).num;
+    const actual: f64 = (try clock.call(&interpreter, arguments)).num;
     const expected = (@as(f64, @floatFromInt(std.time.milliTimestamp())) / 1000.0);
     try testing.expectEqual(expected, actual);
 
