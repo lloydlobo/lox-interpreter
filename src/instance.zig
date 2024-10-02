@@ -14,6 +14,7 @@ const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
 const Value = @import("value.zig").Value;
 const logger = @import("logger.zig");
+const debug = @import("debug.zig");
 const root = @import("root.zig");
 
 const Instance = @This();
@@ -58,10 +59,12 @@ pub fn destroy(self: *Instance, allocator: Allocator) void {
 /// Caller should handle errors and set runtime token for logging error.
 pub fn get(self: *Instance, name: Token) !Value {
     if (self.fields.get(name.lexeme)) |value| {
-        switch (value) {
-            // Unreleated to returning dummy value like `nil` in other interpreted languages.
-            .nil => logger.warn(.default, @src(), "Got nil value for '{}'", .{name}),
-            else => {},
+        // Unreleated to returning dummy value like `nil` in other interpreted languages.
+        if (comptime debug.is_trace_interpreter) {
+            switch (value) {
+                .nil => logger.info(.default, @src(), "Got nil value for '{}'", .{name}),
+                else => {},
+            }
         }
         return value;
     }

@@ -395,7 +395,7 @@ fn visitGetExpr(self: *Self, expr: Expr.Get) Error!Value {
 
     return switch (object) {
         .instance => |instance| blk: {
-            logger.warn(.default, @src(),
+            logger.info(.default, @src(),
                 \\Visiting get expression (DOING)
                 \\{s}Class: '{s}'.
                 \\{s}Instance Get Expr: '{any}'.
@@ -616,25 +616,20 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
                 \\{s}Storing class value (object) in previously declared variable in the current environment.
                 \\{s}Completed two-stage variable binding process to allow references to the class inside its own methods.
             , .{
-                logger.indent,
-                logger.indent,
-                class.name.lexeme,
-                logger.indent, // FIXME: uncomment after fixing few args error
-                logger.indent, // FIXME: uncomment after fixing few args error
+                logger.indent, logger.indent, class.name.lexeme,
+                logger.indent, logger.indent,
             });
 
             try self.environment.define(class.name.lexeme, Value.Nil);
-
-            // FIXME: Implement callFn(), arityFn(), ... with
-            // LoxInstance.makeLoxClass(self.allocator, class,
-            // self.environment);
-            //     `Value not callable ''.`
 
             const cls: *Class = try Class.init(self.allocator, class.name);
             errdefer cls.destroy(self.allocator);
 
             try self.environment.assign(class.name, .{ .class = cls });
-            logger.warn(scoper, @src(), "Implementing .class. {s}{}", .{ logger.newline, class });
+
+            logger.info(scoper, @src(),
+                \\Executed and assigned class. {s}{}
+            , .{ logger.newline, class });
         },
         .expr_stmt => |expr| {
             _ = try self.evaluate(expr);
