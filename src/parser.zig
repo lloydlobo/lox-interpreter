@@ -213,7 +213,6 @@ fn call(self: *Parser) Error!*Expr {
                 .name = name,
                 .value = expr,
             } });
-
         } else {
             break;
         }
@@ -403,7 +402,15 @@ fn synchronize(self: *Parser) void {
             return;
         }
         switch (self.currentType()) {
-            .class, .fun, .@"var", .@"for", .@"if", .@"while", .print, .@"return" => return,
+            .class,
+            .fun,
+            .@"var",
+            .@"for",
+            .@"if",
+            .@"while",
+            .print,
+            .@"return",
+            => return,
             else => {},
         }
 

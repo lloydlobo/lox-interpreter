@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const testing = std.testing;
 const SourceLocation = std.builtin.SourceLocation;
+const root = @import("root.zig");
 
 const logger = @This();
 
@@ -23,7 +24,8 @@ pub const color_red = "\x1b[31m";
 
 const glyph_color = color_white;
 
-pub const newline = "\n" ++ color_reset ++ "\t" ++ glyph_color ++ "└─ " ++ color_reset;
+pub const indent = color_reset ++ "\t" ++ glyph_color ++ "└─ " ++ color_reset;
+pub const newline: []const u8 = "\n" ++ indent;
 
 pub const LogLevel = enum {
     debug,
@@ -103,13 +105,20 @@ pub fn log(
     comptime format: []const u8,
     args: anytype,
 ) void {
+    const is_temp_fix_compile_error_few_args = false;
+    if (is_temp_fix_compile_error_few_args) {
+        root.eprint(format, args); // This gives a good trace.
+        return;
+    }
     // if debugging then comment me.
-    {
+    const is_info_level_enabled = false;
+    if (is_info_level_enabled) {
         const is_skip_logging = (level == LogLevel.info);
         if (comptime is_skip_logging) {
             return;
         }
     }
+
     const stderr = std.io.getStdErr().writer();
 
     // Strip the "src/" prefix from the source file path if it exists
@@ -124,8 +133,9 @@ pub fn log(
     const scope_writer = scope_stream.writer();
 
     const scope: Scope = scoper.toScope();
+
     // Format the scope into the buffer
-    scope.format("", .{}, scope_writer) catch unreachable;
+    scope.format("", .{}, scope_writer) catch |e| root.exit(.runtime_error, "Failed to format scope '{any}'", .{e});
 
     // Write the full log message
     stderr.print(
@@ -154,7 +164,9 @@ pub fn log(
             color_reset,
             color_bold,
         } ++ args,
-    ) catch unreachable;
+    ) catch |e| {
+        root.exit(.runtime_error, "Failed to print to stderr '{any}'", .{e});
+    };
 }
 
 pub fn debug(scoper: Scoper, comptime src: SourceLocation, comptime format: []const u8, args: anytype) void {
@@ -197,4 +209,36 @@ test "basic usage" {
     logger.info(network_scope, @src(), "Connected to server", .{});
     logger.warn(db_scope, @src(), "Slow query detected: {d}ms", .{150});
     logger.err(network_scope, @src(), "Connection lost: {s}", .{"Timeout"});
+
+    logger.warn(.default, @src(),
+        \\Resolving variable initializer expression.
+        \\{s}variable: '{s}'."
+    , .{ logger.indent, "asdf" });
 }
+
+// stderr.print(
+//     v_pad ++
+//         h_pad ++
+//         "{s}{s}{s}{s}{s}: {s}:{s}{s}:{d}{s}:{d}:{s} {s}{s}:{s}{s} " ++
+//         format ++
+//         color_reset ++
+//         "\n" ++
+//         v_pad,
+//     .{
+//         glyph_color,
+//         color_white,
+//         scope_buffer[0 .. scope_writer.context.getPos() catch unreachable],
+//         glyph_color,
+//         color_reset,
+//         stripped_file,
+//         color_white,
+//         src.fn_name,
+//         src.line,
+//         color_white,
+//         src.column,
+//         color_bold,
+//         level.getColor(),
+//         level.getName(),
+//         color_reset,
+//         color_bold,
+//     } ++ args,

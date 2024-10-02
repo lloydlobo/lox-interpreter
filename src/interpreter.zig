@@ -346,18 +346,15 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
         //
         // See https://craftinginterpreters.com/classes.html#creating-instances
         .class => |class| blk: {
-            logger.warn(.default, @src(),
-                \\DOING: .class {any} for call: {any}
-            , .{ class, call.callee });
+            assert(mem.eql(u8, class.name.lexeme, call.callee.variable.lexeme));
+            assert(call.callee.variable.literal == null);
 
             if (class.callable.arity() != args_count) {
-                runtime_token = call.paren;
+                runtime_token = call.paren; // FIXME: options?
+                runtime_token = call.callee.variable;
                 break :blk Error.wrong_arity;
             }
-            break :blk try class.callable.call(
-                self,
-                try arguments.toOwnedSlice(),
-            );
+            break :blk try class.callable.call(self, try arguments.toOwnedSlice());
         },
         .instance => |instance| {
             _ = instance; // autofix
@@ -586,6 +583,20 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
             @panic("Unimplemented");
         },
         .class => |class| {
+            logger.info(scoper, @src(),
+                \\Visiting class statement declaration.
+                \\{s}Capturing class name in a variable in the current environment.
+                \\{s}Converting class syntax node to runtime representation of a callable class '{s}'
+                \\{s}Storing class value (object) in previously declared variable in the current environment.
+                \\{s}Completed two-stage variable binding process to allow references to the class inside its own methods.
+            , .{
+                logger.indent,
+                logger.indent,
+                class.name.lexeme,
+                logger.indent, // FIXME: uncomment after fixing few args error
+                logger.indent, // FIXME: uncomment after fixing few args error
+            });
+
             try self.environment.define(class.name.lexeme, Value.Nil);
 
             // FIXME: Implement callFn(), arityFn(), ... with
@@ -594,8 +605,7 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
             //     `Value not callable ''.`
 
             const cls: *Class = try Class.init(self.allocator, class.name);
-            // const cls: *Value.LoxClass = try self.allocator.create(Value.LoxClass);
-            errdefer self.allocator.destroy(cls);
+            errdefer cls.destroy(self.allocator);
 
             try self.environment.assign(class.name, .{ .class = cls });
             logger.warn(scoper, @src(), "Implementing .class. {s}{}", .{ logger.newline, class });
@@ -609,20 +619,13 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
             else if (if_stmt.else_branch) |else_branch|
                 try self.execute(else_branch, writer);
         },
-        .function => |function| { // `Stmt.Function`
-            {
-                const callable_function = try Function.init(self.allocator, self.environment, function);
-                logger.warn(scoper, @src(), "{s}", .{try callable_function.callable.toString()});
-
-                // try self.environment.define(function.name.lexeme, .{ .function = &callable_function });
-            }
-
-            const fun: *Value.FunctionValue = try Value.FunctionValue.init(
-                self.allocator,
-                self.environment,
-                function,
-            );
-            errdefer fun.destroy(self.allocator);
+        .function => |function| {
+            logger.info(scoper, @src(),
+                \\Visiting function statement declaration.
+                \\{s}Creating callable function '{s}'.
+                \\{s}Capturing function in current environment.
+            , .{ logger.indent, function.name.lexeme, logger.indent });
+            const fun: *Function = try Function.init(self.allocator, self.environment, function);
             try self.environment.define(function.name.lexeme, .{ .function = fun });
         },
         .print_stmt => |expr| {
@@ -690,8 +693,8 @@ pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!vo
         if (self.globals.values.get("clock")) |value| {
             const fun = value.callable;
             assert(@TypeOf(fun) == *Value.CallableValue);
-            assert((fun.arity() == 0) and mem.eql(u8, fun.toString(), "<native fn>"));
-            assert(@TypeOf(fun.call(self, &[_]Value{}).num) == f64);
+            assert((fun.arity() == 0) and mem.eql(u8, try fun.toString(), "<native fn>"));
+            assert(@TypeOf((try fun.call(self, &[_]Value{})).num) == f64);
         }
     }
     // defer {

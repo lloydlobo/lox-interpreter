@@ -145,6 +145,7 @@ pub fn print(comptime fmt: []const u8, args: anytype) void {
 
 pub fn eprint(comptime fmt: []const u8, args: anytype) void {
     const writer = std.io.getStdErr().writer();
+
     writer.print(fmt, args) catch |err| {
         exit(.runtime_error, "Failed to write to stdout: {}", .{err});
     };
