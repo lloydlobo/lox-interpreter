@@ -25,12 +25,6 @@ const root = @import("root.zig");
 // * Consider unifying the error handling approach between the resolver and interpreter.
 // * Consider making the handling of global variables more explicit in both the resolver and interpreter.
 
-/// Toggle flag for new work-in-progress features.
-///
-/// * 20240927040854UTC
-///   https://craftinginterpreters.com/resolving-and-binding.html#static-scope
-pub const g_is_stable_pre_resolver_feature_flag = false;
-
 // Just use this to read, and not edit globally but from functions in `main.zig`.
 pub var g_had_runtime_error: bool = false;
 pub var g_runtime_error_count: usize = 0;
@@ -43,7 +37,12 @@ pub fn runtimeError(token: Token, comptime message: []const u8, args: anytype) v
     g_runtime_error_count += 1;
 }
 
-pub fn report(line: u32, comptime where: []const u8, comptime message: []const u8, args: anytype) void {
+pub fn report(
+    line: u32,
+    comptime where: []const u8,
+    comptime message: []const u8,
+    args: anytype,
+) void {
     root.eprint("[line {d}] Error" ++ where ++ ": " ++ message ++ "\n", .{line} ++ args);
     g_had_error = true;
     g_error_count += 1;
@@ -127,25 +126,25 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
 
         if (cmd == .run) {
             const statements = try parser.parse();
+
             if (g_had_error) {
                 break :blk; // stop if syntax error
             }
 
             var interpreter = try Interpreter.init(allocator);
-            if (comptime !g_is_stable_pre_resolver_feature_flag) {
-                // We do need to actually run the resolver, though.
-                // We insert the new pass after the parser does its magic.
-                var resolver = Resolver.init(allocator, &interpreter);
-                try resolver.resolveStatements(statements);
-                if (g_had_error) {
-                    break :blk;
-                }
-                if (comptime debug.is_trace_interpreter) {
-                    root.printStringHashMap(interpreter.locals);
-                    root.printStringHashMap(interpreter.environment.values);
-                    root.printStringHashMap(interpreter.globals.values);
-                }
+
+            var resolver = Resolver.init(allocator, &interpreter);
+            try resolver.resolveStatements(statements);
+
+            if (g_had_error) {
+                break :blk; // stop if syntax error
             }
+
+            if (comptime debug.is_trace_interpreter) {
+                root.printStringHashMap(interpreter.locals);
+                root.printStringHashMap(interpreter.globals.values);
+            }
+
             try interpreter.interpret(statements, writer);
 
             break :blk;
@@ -156,7 +155,11 @@ pub fn run(writer: anytype, command: []const u8, file_contents: []const u8) !u8 
         const total_errors = g_runtime_error_count + g_error_count;
         if (total_errors != 0) {
             logger.err(.default, @src(), "Found {d} error(s).{s}{s}: {d}{s}{s}: {d}", //
-                .{ total_errors, logger.newline, root.ErrorCode.runtime_error.toString(), g_runtime_error_count, logger.newline, root.ErrorCode.syntax_error.toString(), g_error_count });
+                .{
+                total_errors,          logger.newline, root.ErrorCode.runtime_error.toString(),
+                g_runtime_error_count, logger.newline, root.ErrorCode.syntax_error.toString(),
+                g_error_count,
+            });
         }
     }
 

@@ -28,6 +28,12 @@ comptime {
 
 pub const Error = Callable.Error;
 
+const vtable = Callable.VTable{
+    .toString = toString,
+    .call = call,
+    .arity = arity,
+};
+
 pub fn init(
     allocator: Allocator,
     closure: *Environment,
@@ -53,12 +59,6 @@ pub fn destroy(self: *Function, allocator: Allocator) void {
     allocator.destroy(self);
 }
 
-const vtable = Callable.VTable{
-    .toString = toString,
-    .call = call,
-    .arity = arity,
-};
-
 pub fn toString(callable: *const Callable) []const u8 {
     const self: *Function = @constCast(@fieldParentPtr("callable", callable));
 
@@ -82,7 +82,11 @@ pub fn call(callable: *const Callable, interpreter: *Interpreter, arguments: []V
 
     environment = self.closure;
 
+    const args_count = arguments.len;
     for (self.declaration.parameters, 0..) |param, i| {
+        if (i >= args_count) {
+            @panic("Expected arity to match len of parameters to arguments. Is this a method?");
+        }
         self.closure.define(param.lexeme, arguments[i]) catch |err| {
             // TODO: Should the `call()` caller pre-set runtime_token for error??
             Interpreter.runtime_token = param;

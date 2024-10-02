@@ -146,11 +146,19 @@ EXAMPLE_FILES := $(call generate_example_sources)
 # )
 .PHONY: run-examples
 run-examples: $(EXAMPLE_FILES)
+	make ast-check
+	@echo "Building project from build.zig"
+	@make build
+	@printf "Running command 'run' on examples\n└─\x1b[37m$(EXAMPLE_FILES)\x1b[0m\n"
+	: "NOTE: halt on error is disabled. e.g: " parallel -j $(shell nproc) --halt-on-error 1 'printf ...'
+	@echo $(EXAMPLE_FILES) | tr ' ' '\n' | parallel -j $(shell nproc) 'printf "\x1b[37mInterpreting file\n└─ {} \x1b[0m\n"; $(EXE) run {} $(TRACE_FLAGS);'
+
+.PHONY: valgrind-run-examples
+valgrind-run-examples: $(EXAMPLE_FILES)
 	make -j4 pre-valgrind
 	@printf "Running command 'run' on examples\n└─\x1b[37m$(EXAMPLE_FILES)\x1b[0m\n"
 	: "NOTE: halt on error is disabled. e.g: " parallel -j $(shell nproc) --halt-on-error 1 'printf ...'
 	@echo $(EXAMPLE_FILES) | tr ' ' '\n' | parallel -j $(shell nproc) 'printf "\x1b[37mInterpreting file\n└─ {} \x1b[0m\n"; $(VALGRIND) $(EXE) run {} $(TRACE_FLAGS);'
-
 
 .PHONY: all
 

@@ -10,6 +10,7 @@ const Callable = @import("callable.zig");
 const Class = @import("class.zig");
 const Environment = @import("environment.zig");
 const Interpreter = @import("interpreter.zig");
+const Function = @import("function.zig");
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
 const Value = @import("value.zig").Value;
@@ -30,6 +31,12 @@ comptime {
 }
 
 pub const Error = Callable.Error;
+
+const vtable = Callable.VTable{
+    .toString = toString,
+    .call = call,
+    .arity = arity,
+};
 
 pub fn init(
     allocator: Allocator,
@@ -59,13 +66,23 @@ pub fn destroy(self: *Instance, allocator: Allocator) void {
 /// Caller should handle errors and set runtime token for logging error.
 pub fn get(self: *Instance, name: Token) !Value {
     if (self.fields.get(name.lexeme)) |value| {
-        // Unreleated to returning dummy value like `nil` in other interpreted languages.
+        // Unreleated to returning dummy value like `nil`
+        // in other interpreted languages.
         if (comptime debug.is_trace_interpreter) {
             switch (value) {
                 .nil => logger.info(.default, @src(), "Got nil value for '{}'", .{name}),
                 else => {},
             }
         }
+        return value;
+    }
+
+    if (self.class.find_method(name.lexeme)) |*method| {
+        const fun = try self.callable.allocator.create(Function);
+        fun.* = method.*;
+        errdefer fun.destroy(self.callable.allocator);
+
+        const value: Value = .{ .function = fun };
         return value;
     }
 
@@ -77,12 +94,6 @@ pub fn set(self: *Instance, name: Token, value: Value) Instance.Error!void {
     // there’s no need to see if the key is already present.
     try self.fields.put(name.lexeme, value);
 }
-
-const vtable = Callable.VTable{
-    .toString = toString,
-    .call = call,
-    .arity = arity,
-};
 
 pub fn toString(callable: *const Callable) []const u8 {
     const self: *Instance = @constCast(@fieldParentPtr("callable", callable));

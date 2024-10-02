@@ -7,6 +7,7 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 
 const debug = @import("debug.zig");
+const logger = @import("logger.zig");
 
 // TODO:
 //
@@ -81,54 +82,6 @@ comptime {
     assert(1 << 12 == 4096);
 }
 
-pub fn tracesrcLog(
-    comptime message_level: std.log.Level,
-    comptime src: std.builtin.SourceLocation,
-    comptime fmt: []const u8,
-    args: anytype,
-) void {
-    const src_fmt = "{s}{s}:{s}{s}:{d}{s}{s}:{d}{s}";
-
-    const src_args = .{ COLOR_WHITE, src.file, COLOR_BOLD, src.fn_name, src.line, COLOR_RESET, COLOR_WHITE, src.column, COLOR_RESET };
-    const message_color = switch (message_level) {
-        .err => COLOR_RED,
-        .warn => COLOR_YELLOW,
-        .debug => COLOR_CYAN,
-        .info => COLOR_GREEN,
-    };
-    const args_fmt = "\n" ++
-        COLOR_YELLOW ++ "└─ " ++ message_color ++ fmt ++ COLOR_RESET;
-
-    var buffer: [1 << 11]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buffer);
-    const writer = stream.writer();
-    std.fmt.format(writer, src_fmt, src_args) catch |err| exit(.exit_failure, "{}", .{err});
-    std.fmt.format(writer, args_fmt, args) catch |err| exit(.exit_failure, "{}", .{err});
-
-    const pos = writer.context.*.getPos() catch |err| exit(.exit_failure, "{}", .{err});
-    std.log.defaultLog(message_level, std.log.default_log_scope, "{s}", .{buffer[0..pos]});
-}
-
-/// NOTE: Manually change std.log.debug to std.log.warn to log in tests.
-/// NOTE: `@src() std.builtin.SourceLocation` ─ Must be called in a function.
-pub fn tracesrc(comptime src: anytype, comptime fmt: []const u8, args: anytype) void {
-    if (comptime any(bool, debug_trace_flags, null)) {
-        const src_fmt = "{s}{s}:{s}{s}:{d}{s}{s}:{d}{s}";
-        const src_args = .{ COLOR_WHITE, src.file, COLOR_BOLD, src.fn_name, src.line, COLOR_RESET, COLOR_WHITE, src.column, COLOR_RESET };
-        const args_fmt = "\n" ++ COLOR_YELLOW ++ "└─ " ++ COLOR_CYAN ++ fmt ++ COLOR_RESET;
-
-        var buffer: [1 << 11]u8 = undefined;
-        var stream = std.io.fixedBufferStream(&buffer);
-
-        const writer = stream.writer();
-        std.fmt.format(writer, src_fmt, src_args) catch |err| exit(.exit_failure, "{}", .{err});
-        std.fmt.format(writer, args_fmt, args) catch |err| exit(.exit_failure, "{}", .{err});
-
-        const pos = writer.context.*.getPos() catch |err| exit(.exit_failure, "{}", .{err});
-        std.log.debug("{s}", .{buffer[0..pos]});
-    }
-}
-
 // Copied from gitlab.com/andreorst/lox
 pub fn exit(status: ErrorCode, comptime fmt: []const u8, args: anytype) noreturn {
     eprint(fmt, args);
@@ -145,7 +98,6 @@ pub fn print(comptime fmt: []const u8, args: anytype) void {
 
 pub fn eprint(comptime fmt: []const u8, args: anytype) void {
     const writer = std.io.getStdErr().writer();
-
     writer.print(fmt, args) catch |err| {
         exit(.runtime_error, "Failed to write to stdout: {}", .{err});
     };
@@ -160,16 +112,16 @@ pub inline fn stderr() std.fs.File {
 }
 
 pub fn printStringHashMap(map: anytype) void {
-    print("StringHashMap(anytype) {{\n", .{});
+    std.log.debug("StringHashMap(anytype) {{", .{});
 
     var it = map.iterator();
     while (it.next()) |entry| {
         const key = entry.key_ptr.*;
         const value = entry.value_ptr.*;
-        print("    {{ '{s}' = {any}, }}\n", .{ key, value });
+        std.log.debug("    {{ '{s}' = {any}, }}", .{ key, value });
     }
 
-    print("\n}}\n", .{});
+    std.log.debug("}}", .{});
 }
 
 pub inline fn isAlphaNumeric(c: u8) bool {
@@ -276,25 +228,43 @@ pub inline fn any(comptime T: type, comptime items: anytype, comptime predicateF
 }
 
 test "any ─ basic usage" {
-    // zig fmt: off
     {
         const list = [_]i32{ 1, 2, 3, 4, 5 };
-        try testing.expect(any(i32, list, struct { fn predicate(x: i32) bool { return x == 3; } }.predicate)); // assert that 3 is in the list
-        try testing.expect(!any(i32, list, struct { fn predicate(x: i32) bool { return x == 6; } }.predicate)); // assert that 6 is not in the list
+        try testing.expect(any(i32, list, struct {
+            fn predicate(x: i32) bool {
+                return x == 3;
+            }
+        }.predicate)); // assert that 3 is in the list
+        try testing.expect(!any(i32, list, struct {
+            fn predicate(x: i32) bool {
+                return x == 6;
+            }
+        }.predicate)); // assert that 6 is not in the list
     }
 
     {
         const list = [_]bool{ false, false, true };
         try testing.expect(any(bool, list, null)); // assert that true is in the list
-        try testing.expect(any(bool, list, struct { fn predicate(x: bool) bool { return x == false; } }.predicate)); // assert that false is in the list
+        try testing.expect(any(bool, list, struct {
+            fn predicate(x: bool) bool {
+                return x == false;
+            }
+        }.predicate)); // assert that false is in the list
     }
 
     {
         const list = [_][]const u8{ "apple", "banana", "cherry" };
-        try testing.expect(any([]const u8, list, struct { fn predicate(x: []const u8) bool { return std.mem.eql(u8, x, "apple"); } }.predicate)); // assert that apple is in the list
-        try testing.expect(any([]const u8, list, struct { fn predicate(x: []const u8) bool { return std.mem.eql(u8, x, "cherry"); } }.predicate)); // assert that cherry is not the list
+        try testing.expect(any([]const u8, list, struct {
+            fn predicate(x: []const u8) bool {
+                return std.mem.eql(u8, x, "apple");
+            }
+        }.predicate)); // assert that apple is in the list
+        try testing.expect(any([]const u8, list, struct {
+            fn predicate(x: []const u8) bool {
+                return std.mem.eql(u8, x, "cherry");
+            }
+        }.predicate)); // assert that cherry is not the list
     }
-    // zig fmt: on
 }
 
 test "any ─ with custom structs" {
@@ -309,17 +279,25 @@ test "any ─ with custom structs" {
         .{ .x = 5, .y = 6 },
     };
 
-    // zig fmt: off
-    try testing.expect(any(Point, &points, struct { fn predicate(p: Point) bool { return p.x == 3 and p.y == 4; } }.predicate));
-    try testing.expect(!any(Point, &points, struct { fn predicate(p: Point) bool { return p.x == 7 and p.y == 8; } }.predicate));
-    // zig fmt: on
+    try testing.expect(any(Point, &points, struct {
+        fn predicate(p: Point) bool {
+            return p.x == 3 and p.y == 4;
+        }
+    }.predicate));
+    try testing.expect(!any(Point, &points, struct {
+        fn predicate(p: Point) bool {
+            return p.x == 7 and p.y == 8;
+        }
+    }.predicate));
 }
+
 test "any ─ with non-indexable type" { // This test should fail to compile
     if (comptime false) {
         const non_indexable = 42;
         _ = any(i32, non_indexable, null);
     }
 }
+
 test "any ─ with empty array" { // This test should fail to compile
     if (comptime false) {
         const empty_array = [_]i32{};
@@ -351,11 +329,3 @@ test "any ─ with empty array" { // This test should fail to compile
 // try string.appendSlice(user);
 // try string.appendSlice("/reponame");
 // const final_url = string.items;
-
-//
-// const Writer = struct {
-//     writeFn: *const fn (self: *Writer, bytes: []const u8) anyerror!usize,
-//
-//     pub fn write(self: *Writer, bytes: []const u8) anyerror!usize {
-//         return self.writeFn(self, bytes);
-//     }

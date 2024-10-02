@@ -1,6 +1,10 @@
 //! Resolves each variable definition and usage with it's corresponding scope.
-//! Stores the scope number in the `locals` which is returned as an artifacto
-//! of calling the resolver.
+//!
+//! Stores the scope number in the `locals` which is returned as an artifact of
+//! calling the resolver.
+//!
+//! We do need to actually run the resolver, though. We insert the new pass
+//! after the parser does its magic.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -296,6 +300,19 @@ pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
             // logger.debug(scoper, @src(), "{}", .{class});
             try self.declare(class.name);
             try self.define(class.name);
+
+            // FIXME: See https://craftinginterpreters.com/classes.html#methods-on-classes
+            //
+            // See test.lox
+            // Undefined property 'serve_on'.
+
+            // Storing the function type in a local variable is pointless right
+            // now, but we’ll expand this code before too long and it will make
+            // more sense.
+            for (class.methods) |*method| {
+                const declaration: FunctionType = .method;
+                try self.resolveFunction(method, declaration);
+            }
         },
         .expr_stmt => |expr_stmt| {
             try self.resolveExpr(expr_stmt);

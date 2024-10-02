@@ -1,3 +1,8 @@
+//! Where an instance stores state, the class stores behavior. `Instance` has
+//! its map of fields, and `Class` gets a map of methods. Even though methods
+//! are owned by the class, they are still accessed through instances of that
+//! class.
+
 const std = @import("std");
 const assert = std.debug.assert;
 const testing = std.testing;
@@ -5,9 +10,10 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 
 const Callable = @import("callable.zig");
-const Instance = @import("instance.zig");
 const Environment = @import("environment.zig");
 const Expr = @import("expr.zig").Expr;
+const Function = @import("function.zig");
+const Instance = @import("instance.zig");
 const Interpreter = @import("interpreter.zig");
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
@@ -17,17 +23,27 @@ const root = @import("root.zig");
 
 const Class = @This();
 
-callable: Callable, // provides `VTable`
-name: Token,
+callable: Callable, // provides `VTable`. @sizeOf 24
+name: Token, // @sizeOf 56
+methods: std.StringHashMap(Function), // @sizeOf 40
 
 comptime {
-    assert(@sizeOf(@This()) == 80);
+    assert(@sizeOf(@This()) == 120);
     assert(@alignOf(@This()) == 8);
 }
+
+pub const Error = Allocator.Error;
+
+const vtable = Callable.VTable{
+    .toString = toString,
+    .call = call,
+    .arity = arity,
+};
 
 pub fn init(
     allocator: Allocator,
     name: Token,
+    methods: std.StringHashMap(Function),
 ) Allocator.Error!*Class {
     const self = try allocator.create(Class);
     self.* = .{
@@ -36,7 +52,7 @@ pub fn init(
             .vtable = &vtable,
         },
         .name = name,
-        // .declaration = declaration,
+        .methods = methods,
     };
 
     return self;
@@ -48,14 +64,15 @@ pub fn destroy(self: *Class, allocator: Allocator) void {
     allocator.destroy(self);
 }
 
-pub const AllocPrintError = error{OutOfMemory};
-pub const Error = AllocPrintError;
+pub fn find_method(self: *Class, name: []const u8) ?Function {
+    const methods: std.StringHashMap(Function) = self.methods;
 
-const vtable = Callable.VTable{
-    .toString = toString,
-    .call = call,
-    .arity = arity,
-};
+    if (methods.get(name)) |fun| {
+        return fun;
+    }
+
+    return null;
+}
 
 pub fn toString(callable: *const Callable) []const u8 {
     const self: *Class = @constCast(@fieldParentPtr("callable", callable));

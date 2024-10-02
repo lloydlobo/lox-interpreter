@@ -321,7 +321,7 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
         .callable => |callable| blk: {
             if (callable.arity() != args_count) {
                 runtime_token = call.paren; // FIXME: options?
-                runtime_token = call.callee.variable;
+                runtime_token = call.callee.get.name;
                 break :blk Error.wrong_arity;
             }
             break :blk callable.call(self, try arguments.toOwnedSlice());
@@ -329,7 +329,8 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
         .function => |function| blk: {
             if (function.callable.arity() != args_count) {
                 runtime_token = call.paren; // FIXME: options?
-                runtime_token = call.callee.variable;
+                // thread 257403 panic: access of union field 'variable' while field 'get' is active
+                runtime_token = call.callee.get.name;
                 break :blk Error.wrong_arity;
             }
             break :blk function.callable.call(self, try arguments.toOwnedSlice());
@@ -619,12 +620,19 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
                 logger.indent, logger.indent, class.name.lexeme,
                 logger.indent, logger.indent,
             });
-
             try self.environment.define(class.name.lexeme, Value.Nil);
 
-            const cls: *Class = try Class.init(self.allocator, class.name);
-            errdefer cls.destroy(self.allocator);
+            var methods = StringHashMap(Function).init(self.allocator);
 
+            for (class.methods) |method| {
+                assert(@TypeOf(method) == Stmt.Function);
+                const function: *Function = try Function.init(self.allocator, self.environment, method);
+                assert(@TypeOf(function) != @TypeOf(method));
+                try methods.put(method.name.lexeme, function.*);
+            }
+
+            const cls: *Class = try Class.init(self.allocator, class.name, methods);
+            errdefer cls.destroy(self.allocator);
             try self.environment.assign(class.name, .{ .class = cls });
 
             logger.info(scoper, @src(),
@@ -689,10 +697,6 @@ pub fn interpretExpression(self: *Self, expr: *Expr, writer: anytype) Allocator.
 
 pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!void {
     if (comptime debug.is_trace_interpreter) {
-        const is_resolver_feature_flag = !main.g_is_stable_pre_resolver_feature_flag;
-        if (comptime !is_resolver_feature_flag) {
-            assert(self.environment.values.count() == 0);
-        }
         if (self.globals.values.get("clock")) |value| {
             const fun = value.callable;
             assert(@TypeOf(fun) == *Value.CallableValue);
@@ -708,7 +712,9 @@ pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!vo
     // }
 
     for (stmts) |*stmt| {
-        _ = self.execute(stmt, writer) catch |err| return handleRuntimeError(err);
+        _ = self.execute(stmt, writer) catch |err| {
+            return handleRuntimeError(err);
+        };
     }
 }
 
