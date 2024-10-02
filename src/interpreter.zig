@@ -367,60 +367,46 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
     };
 }
 
+// _ = instance;
+// If the object is a LoxInstance, then we ask it to look up the property. It must be time to give LoxInstance some actual state. A map will do fine.
+//
+//   private LoxClass klass;
+//   private final Map<String, Object> fields = new HashMap<>();
+//
+//   LoxInstance(LoxClass klass) {
+// lox/LoxInstance.java, in class LoxInstance
+// Each key in the map is a property name and the corresponding value is the property’s value. To look up a property on an instance:
+//
+//   Object get(Token name) {
+//     if (fields.containsKey(name.lexeme)) {
+//       return fields.get(name.lexeme);
+//     }
+//
+//     throw new RuntimeError(name,
+//         "Undefined property '" + name.lexeme + "'.");
+//   }
+//
+
 // In theory, we can now read properties on objects. But since there’s no way
 // to actually stuff any state into an instance, there are no fields to access.
 // Before we can test out reading, we must support writing.
-fn visitGetExpr(self: *Self, get: Expr.Get) Error!Value {
-    // Evaluate the expression whose property is being accessed.
-    const value: Value = try self.evaluate(get.object);
+fn visitGetExpr(self: *Self, expr: Expr.Get) Error!Value {
+    const object: Value = try self.evaluate(expr.object);
 
-    return switch (value) {
+    return switch (object) {
         .instance => |instance| blk: {
-            // _ = instance;
-            // If the object is a LoxInstance, then we ask it to look up the property. It must be time to give LoxInstance some actual state. A map will do fine.
-            //
-            //   private LoxClass klass;
-            //   private final Map<String, Object> fields = new HashMap<>();
-            //
-            //   LoxInstance(LoxClass klass) {
-            // lox/LoxInstance.java, in class LoxInstance
-            // Each key in the map is a property name and the corresponding value is the property’s value. To look up a property on an instance:
-            //
-            //   Object get(Token name) {
-            //     if (fields.containsKey(name.lexeme)) {
-            //       return fields.get(name.lexeme);
-            //     }
-            //
-            //     throw new RuntimeError(name,
-            //         "Undefined property '" + name.lexeme + "'.");
-            //   }
-            //
-
-            logger.info(.default, @src(),
+            logger.warn(.default, @src(),
                 \\Visiting get expression (DOING)
                 \\{s}Class: '{s}'.
-                \\{s}Instance Method: '{any}'.
-            , .{
-                logger.indent, instance.callable.toString(),
-                logger.indent, get,
-            });
-
-            const out: Value = instance.get(get.name) catch |err| {
-                assert(err == Error.undefined_property); // sanity check
-                runtime_token = get.name;
+                \\{s}Instance Get Expr: '{any}'.
+            , .{ logger.indent, instance.callable.toString(), logger.indent, expr });
+            break :blk instance.get(expr.name) catch |err| {
+                runtime_token = expr.name;
                 break :blk err;
             };
-            // This was written before we introduced callable. So assume
-            // the following is a HACK / Sanity check, which is not necessary.
-            switch (out) {
-                .nil => try handleRuntimeError(error.non_instance_property),
-                else => {},
-            }
-            break :blk out;
         },
-        else => blk: {
-            // Note: In Lox, only class instances can have properties.
-            runtime_token = get.name;
+        else => blk: { // Note: In Lox, only class instances can have properties.
+            runtime_token = expr.name;
             break :blk RuntimeError.non_instance_property;
         },
     };
@@ -458,11 +444,14 @@ fn visitSetExpr(self: *Self, expr: Expr.Set) Error!Value {
     return switch (object) {
         .instance => |instance| blk: {
             const value = try self.evaluate(expr.value);
-            logger.warn(.default, @src(),
+            logger.info(.default, @src(),
                 \\Visited after evaluating expr.value in Parser.assignment (Expr.Get -> Expr.Set).
                 \\{s}expr.name: '{}'.
                 \\{s}value: '{}'.
-            , .{ logger.indent, expr.name, logger.indent, value });
+            , .{
+                logger.indent, expr.name,
+                logger.indent, value,
+            });
 
             instance.set(expr.name, value) catch |err| break :blk err;
 

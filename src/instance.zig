@@ -55,18 +55,24 @@ pub fn destroy(self: *Instance, allocator: Allocator) void {
 
 /// Throws runtime error and exits if `fields` does not contain `name.lexeme`.
 /// See ast node: `Expr.Get`.
+/// Caller should handle errors and set runtime token for logging error.
 pub fn get(self: *Instance, name: Token) !Value {
-    return self.fields.get(name.lexeme) orelse Interpreter.Error.undefined_property;
-    // orelse {
-    //     return Interpreter.panicRuntimeError(error.undefined_property, name);
-    // };
+    if (self.fields.get(name.lexeme)) |value| {
+        switch (value) {
+            // Unreleated to returning dummy value like `nil` in other interpreted languages.
+            .nil => logger.warn(.default, @src(), "Got nil value for '{}'", .{name}),
+            else => {},
+        }
+        return value;
+    }
+
+    return Interpreter.Error.undefined_property;
 }
 
 pub fn set(self: *Instance, name: Token, value: Value) Instance.Error!void {
+    // Since Lox allows freely creating new fields on instances,
+    // there’s no need to see if the key is already present.
     try self.fields.put(name.lexeme, value);
-    // return self.fields.get(name.lexeme) orelse {
-    //     return Interpreter.panicRuntimeError(error.undefined_property, name);
-    // };
 }
 
 const vtable = Callable.VTable{
