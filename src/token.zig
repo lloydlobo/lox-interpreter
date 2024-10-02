@@ -7,9 +7,13 @@ const formatNumber = @import("root.zig").formatNumber;
 
 const Token = @This();
 
+/// `foo` in "var foo = 42;"
 lexeme: []const u8,
-line: u32, // Initial is 1.
+// Initial line number is 1.
+line: u32,
+/// `42` in "var foo = 42;"
 literal: ?Literal,
+/// The `Token` `Type`.
 type: Type,
 
 comptime {

@@ -317,7 +317,7 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
             }
             break :blk callable.call(self, try arguments.toOwnedSlice());
         },
-        .function => |function| blk: { // `Value.LoxFunction`
+        .function => |function| blk: {
             if (function.callable.arity() != args_count) {
                 runtime_token = call.paren; // options?
                 runtime_token = call.callee.variable;

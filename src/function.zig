@@ -16,12 +16,12 @@ const root = @import("root.zig");
 
 const Function = @This();
 
-callable: Callable, // provides VTable
+callable: Callable, // provides `VTable`
 closure: *Environment,
 declaration: Stmt.Function,
 
 comptime {
-    // assert(@sizeOf(@This()) == 40);
+    assert(@sizeOf(@This()) == 120);
     assert(@alignOf(@This()) == 8);
 }
 
@@ -43,9 +43,7 @@ pub fn init(
 /// `self` should be the return value of `create`, or otherwise
 /// have the same address and alignment property.
 pub fn destroy(self: *Function, allocator: Allocator) void {
-    self.callable.destroy(allocator);
-    // self.callable.destroy(self.closure);
-
+    // self.callable.destroy(allocator);
     allocator.destroy(self);
 }
 
@@ -80,15 +78,19 @@ pub fn call(callable: *const Callable, interpreter: *Interpreter, arguments: []V
         });
     };
     errdefer callable.allocator.destroy(environment);
+
     environment = self.closure;
 
     for (self.declaration.parameters, 0..) |param, i| {
-        self.closure.define(param.lexeme, arguments[i]) catch |err| Interpreter.handleRuntimeError(err) catch unreachable;
+        self.closure.define(param.lexeme, arguments[i]) catch |err| {
+            Interpreter.handleRuntimeError(err) catch unreachable;
+        };
     }
 
     const body: Stmt.Block = self.declaration.body;
     const closure: Environment.Closure = .{ .existing = environment };
     const writer = root.stdout().writer();
+
     const result = interpreter.executeBlock(body, closure, writer);
 
     result catch |err| switch (err) {
@@ -100,6 +102,7 @@ pub fn call(callable: *const Callable, interpreter: *Interpreter, arguments: []V
                 Interpreter.runtime_return_value = undefined;
                 Interpreter.runtime_token = undefined;
             }
+
             return Interpreter.runtime_return_value;
         },
         else => {
@@ -117,8 +120,8 @@ pub fn arity(callable: *const Callable) usize {
     return self.declaration.parameters.len;
 }
 
-test "basic usage" {
-    try testing.expectEqual(24, @sizeOf(@This()));
+test "stats" {
+    try testing.expectEqual(120, @sizeOf(@This()));
     try testing.expectEqual(8, @alignOf(@This()));
 }
 
@@ -129,9 +132,9 @@ test "Function initialization" {
 
     const env = try Environment.init(allocator);
     const declaration = Stmt.Function{
-        .name = Token{ .type = .identifier, .lexeme = "testFunc", .line = 1 },
+        .name = Token{ .type = .identifier, .lexeme = "testFunc", .line = 1, .literal = null },
         .parameters = &[_]Token{},
-        .body = Stmt.Block{ .statements = &[_]Stmt{} },
+        .body = &[_]Stmt{},
     };
 
     const func = try Function.init(allocator, env, declaration);
@@ -148,9 +151,9 @@ test "Function toString" {
 
     const env = try Environment.init(allocator);
     const declaration = Stmt.Function{
-        .name = Token{ .type = .identifier, .lexeme = "testFunc", .line = 1 },
+        .name = Token{ .type = .identifier, .lexeme = "testFunc", .line = 1, .literal = null },
         .parameters = &[_]Token{},
-        .body = Stmt.Block{ .statements = &[_]Stmt{} },
+        .body = &[_]Stmt{},
     };
 
     const func = try Function.init(allocator, env, declaration);
@@ -169,12 +172,12 @@ test "Function arity" {
 
     const env = try Environment.init(allocator);
     const declaration = Stmt.Function{
-        .name = Token{ .type = .identifier, .lexeme = "testFunc", .line = 1 },
-        .parameters = &[_]Token{
-            Token{ .type = .identifier, .lexeme = "a", .line = 1 },
-            Token{ .type = .identifier, .lexeme = "b", .line = 1 },
-        },
-        .body = Stmt.Block{ .statements = &[_]Stmt{} },
+        .name = Token{ .type = .identifier, .lexeme = "testFunc", .line = 1, .literal = null },
+        .parameters = @constCast(&[_]Token{
+            Token{ .type = .identifier, .lexeme = "a", .line = 1, .literal = null },
+            Token{ .type = .identifier, .lexeme = "b", .line = 1, .literal = null },
+        }),
+        .body = &[_]Stmt{},
     };
 
     const func = try Function.init(allocator, env, declaration);
