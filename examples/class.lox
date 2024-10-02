@@ -1,0 +1,63 @@
+print "file: class.lox";
+
+print "# Class";
+
+class Bagel {};
+
+print Bagel; // Prints "Bagel".
+var bagel = Bagel();
+
+print bagel; // Prints "Bagel instance".
+
+{
+    print "## Class ─ Set Expr";
+    var value = 42;
+    print "setting value of bagel.some_property...";
+    print value;
+    bagel.some_property = value;
+    bagel.nil_property = nil;
+
+    print "## Class ─ Get Expr";
+    print "getting value of bagel.some_property...";
+    print bagel.some_property;
+    print bagel.nil_property;
+}
+
+
+print "## Class ─ Methods";
+
+{
+    print "### Class ─ Methods: Devonshire_Cream";
+    class Devonshire_Cream {
+        serve_on() {
+            return "Scones";
+        }
+    };
+    print Devonshire_Cream; // Prints "Devonshire_Cream".
+
+    var devonshire_cream = Devonshire_Cream();
+    print devonshire_cream; // Prints "Devonshire_Cream instance".
+}
+
+{
+    print "### Class ─ Methods: Object";
+    class Object {};
+    var object = Object();
+
+    fun add_2_fun(arg) {
+        return arg + 2;
+    }
+
+    object.method_add_2 = add_2_fun;
+    print object.method_add_2; //> <fn add_2_fun>
+
+    var add_2 = object.method_add_2;
+    print add_2; //> <fn add_2_fun>
+    print add_2(40); //> 42 i.e. `method(argument)`
+}
+
+
+// see `:h modeline`
+// vim: set commentstring=//\ %s :
+// vim: set filetype=c :
+// vim: set sts=4 sw=4 et :

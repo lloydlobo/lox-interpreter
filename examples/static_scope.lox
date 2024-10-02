@@ -8,17 +8,14 @@ var a = "outer";
 }
 
 print "# Resolving variable declarations";
-print "@disabled complie time error";
+print "@disabled compile time error";
 // We split binding into two steps, declaring then defining, 
 // in order to handle funny edge cases like this:
-//     var a = "outer";
-//     {
-//         var a = a;
-//     }
-// Make it an error to reference a variable in its initializer. Have the
-// interpreter fail either at compile time or runtime if an initializer
-// mentions the variable being initialized.
-
+// var a = "outer";
+// {
+//     var a = a; // [line 16] Error at 'a': Can't read local variable in its own initializer.
+//
+// }
 
 //
 // FIN

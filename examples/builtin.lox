@@ -1,0 +1,19 @@
+print "# Builtin";
+
+// `clock()` is a global function baked in, just like `print()` is.
+print clock; //> <native fn>
+print clock();
+// Tested approx at UTC timestamp: 20240928053409UTC
+//> 1727501631.727
+// Tested approx at UTC timestamp: 20241002134617UTC
+//> 1727876722.05
+
+print noop; //> <native fn>
+print noop(); //> nil
+
+
+
+// see `:h modeline`
+// vim: set commentstring=//\ %s :
+// vim: set filetype=c :
+// vim: set sts=4 sw=4 et :

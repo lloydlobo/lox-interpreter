@@ -1,0 +1,91 @@
+print "# Resolution Errors";
+
+// Invalid return errors
+// return "at top level"; // Triggers compiler error when uncommented.
+
+var a = "first";
+// The Resolver to populate assigns in local/globals or defer interpreter to
+// use the environment for now Also should this be an error or a feature?
+{
+    a = "second";
+    print a;
+}
+
+a = "third";
+print a; //> third
+{
+    // We split binding into two steps, declaring then defining, 
+    // in order to handle funny edge cases like this:
+    //
+    // How do other languages you know handle local variables that refer to the
+    // same name in their initializer, like:
+    // Is it a runtime error? Compile error? Allowed? Do they treat global
+    // variables differently? Do you agree with their choices? Justify your
+    // answer.
+    //
+    // var a = a;
+
+    // var a = "outer";
+    // {
+    //     var a = a; // [line 16] Error at 'a': Can't read local variable in its own initializer.
+    //
+    // }
+    // Make it an error to reference a variable in its initializer. Have the
+    // interpreter fail either at compile time or runtime if an initializer
+    // mentions the variable being initialized.
+}
+
+
+
+// TODO: Extend the Resolver to report an error if a local variable is never used.
+{
+    var unused_variable_foo = 1;
+}
+
+
+fun global_function() {
+    print "in global_function";
+}
+global_function();
+
+
+{
+    print "in a block";
+    fun bar_function() {
+        print "in bar_function.. that is inside a block";
+    }
+    bar_function();
+}
+
+
+fun foo_function() {
+    print "in foo_function";
+    fun bar_function() {
+        print "in bar_function.. that is inside foo_function";
+        return nil;
+    }
+    print(bar_function());
+}
+foo_function();
+
+print "Ancestor environment traversal";
+{
+    var a_1 = 1;
+    var a_2 = 2;
+    {
+        var b_1 = 3;
+        var b_2 = 4;
+        {
+            print a_1;
+            {
+                print b_2;
+            }
+
+        }
+    }
+}
+
+// see `:h modeline`
+// vim: set commentstring=//\ %s :
+// vim: set filetype=c :
+// vim: set sts=4 sw=4 et :
