@@ -4,23 +4,24 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 const StringHashMap = std.StringHashMap;
 
+const Callable = @import("callable.zig");
+const Class = @import("class.zig");
+const ClassContext = @import("loxclass.zig");
 const Environment = @import("environment.zig");
 const Expr = @import("expr.zig").Expr;
+const Function = @import("function.zig");
 const FunctionContext = @import("loxfunction.zig");
-const ClassContext = @import("loxclass.zig");
+const ReturnValue = @import("value.zig").Value.Return;
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
 const Value = @import("value.zig").Value;
-const ReturnValue = @import("value.zig").Value.Return;
-const Function = @import("function.zig");
-const Callable = @import("callable.zig");
 const debug = @import("debug.zig");
 const logger = @import("logger.zig");
 const main = @import("main.zig");
 const root = @import("root.zig");
 const runtimeError = @import("main.zig").runtimeError;
 
-const builtin = @import("builtin/root.zig");
+const loxbuiltin = @import("builtin/root.zig");
 
 const Interpreter = @This(); // File struct
 
@@ -38,14 +39,16 @@ comptime {
     assert(@alignOf(@This()) == 8);
 }
 
+/// TODO: prefix with `g_`, since these are mutated from different files.
+///
 /// Uses thread-local variables to communicate out-of-band error information.
+///
 /// See also:
 ///   - https://www.reddit.com/r/Zig/comments/wqnd04/my_reasoning_for_why_zig_errors_shouldnt_have_a/
 ///   - https://github.com/ziglang/zig/issues/2647
 /// Key doesn't already exist in environments's variable map.
-pub var undeclared_token: Token = undefined;
 pub var runtime_token: Token = undefined;
-
+pub var undeclared_token: Token = undefined;
 pub var runtime_error: Error = undefined;
 pub var runtime_return_value: Value = undefined;
 
@@ -87,16 +90,19 @@ pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
     {
         const noop: *Callable = try Callable.init(self.allocator);
         errdefer noop.destroy(self.allocator);
-        noop.*.vtable = builtin.default_vtable;
+        noop.*.vtable = loxbuiltin.default_vtable;
 
         const clock: *Callable = try Callable.init(self.allocator);
         errdefer clock.destroy(self.allocator);
-        clock.*.vtable = builtin.clock_vtable;
+        clock.*.vtable = loxbuiltin.clock_vtable;
 
-        assert((noop.vtable.arity(noop) == 0) and mem.eql(u8, "<native fn>", try noop.vtable.toString(noop)) and
-            (noop.vtable.call(noop, &self, &.{}).nil == Value.Nil.nil));
-        assert((clock.vtable.arity(clock) == 0) and mem.eql(u8, "<native fn>", try clock.vtable.toString(clock)) and
-            (clock.vtable.call(clock, &self, &.{}).num > 0.0));
+        assert((noop.vtable.arity(noop) == 0) and
+            mem.eql(u8, "<native fn>", try noop.vtable.toString(noop)) and
+            (try noop.vtable.call(noop, &self, &.{})).nil == Value.Nil.nil);
+
+        assert((clock.vtable.arity(clock) == 0) and
+            mem.eql(u8, "<native fn>", try clock.vtable.toString(clock)) and
+            ((try (clock.vtable.call(clock, &self, &.{}))).num > 0.0));
 
         self.globals.define("noop", .{ .callable = noop }) catch |err| try handleRuntimeError(err);
         self.globals.define("clock", .{ .callable = clock }) catch |err| try handleRuntimeError(err);
@@ -166,17 +172,21 @@ fn printValue(writer: anytype, value: Value) void {
             root.exit(.runtime_error, "{any}", .{err});
         }}) catch {},
 
-        .function => |function| std.fmt.format(
-            writer,
-            "{s}",
-            .{
-                function.callable.toString() catch |err| {
-                    root.exit(.runtime_error, "{any}", .{err});
-                },
+        .function => |function| std.fmt.format(writer, "{s}", .{
+            function.callable.toString() catch |err| {
+                root.exit(.runtime_error, "{any}", .{err});
             },
-        ) catch {},
-        .class => |callable_class| std.fmt.format(writer, "{s}", .{callable_class.toString()}) catch {},
-        .instance => |callable_class_instance| std.fmt.format(writer, "{s}", .{callable_class_instance.toString()}) catch {},
+        }) catch {},
+        .class => |class| std.fmt.format(writer, "{s}", .{
+            class.callable.toString() catch |err| {
+                root.exit(.runtime_error, "{any}", .{err});
+            },
+        }) catch {},
+        .instance => |class_instance| std.fmt.format(writer, "{s}", .{
+            class_instance.callable.toString() catch |err| {
+                root.exit(.runtime_error, "{any}", .{err});
+            },
+        }) catch {},
     }
 }
 
@@ -303,6 +313,7 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
         args_count,
     );
     errdefer arguments.deinit();
+
     for (call.arguments) |argument| {
         try arguments.append(try self.evaluate(argument));
     }
@@ -311,7 +322,7 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
     return switch (callee) {
         .callable => |callable| blk: {
             if (callable.arity() != args_count) {
-                runtime_token = call.paren; // options?
+                runtime_token = call.paren; // FIXME: options?
                 runtime_token = call.callee.variable;
                 break :blk Error.wrong_arity;
             }
@@ -319,16 +330,13 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
         },
         .function => |function| blk: {
             if (function.callable.arity() != args_count) {
-                runtime_token = call.paren; // options?
+                runtime_token = call.paren; // FIXME: options?
                 runtime_token = call.callee.variable;
                 break :blk Error.wrong_arity;
             }
             break :blk function.callable.call(self, try arguments.toOwnedSlice());
         },
-        //
-        //
         // Right now, if you try this:
-        //
         //      class Bagel {}
         //      Bagel();
         //
@@ -336,43 +344,26 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
         // object implements LoxCallable and reports an error since LoxClass
         // doesn’t. Not yet, that is.
         //
-        //
-        // SHOULD BE BAGEL INSTANCE
-        //
-        //      print "file: test.lox";
-        //
-        //      print "# Class";
-        //
-        //      class Bagel {};
-        //      var bagel = Bagel();
-        //      print Bagel; // Prints "Bagel instance".
-        //
         // See https://craftinginterpreters.com/classes.html#creating-instances
-        //
-        //
-        //
-        //
         .class => |class| blk: {
-            logger.warn(.default, @src(), "DOING: .class {any} for call: {any}", .{
-                class,
-                call.callee,
-            });
+            logger.warn(.default, @src(),
+                \\DOING: .class {any} for call: {any}
+            , .{ class, call.callee });
 
-            if (class.arity() != args_count) {
+            if (class.callable.arity() != args_count) {
                 runtime_token = call.paren;
                 break :blk Error.wrong_arity;
             }
-            break :blk class.call(self, try arguments.toOwnedSlice());
+            break :blk try class.callable.call(
+                self,
+                try arguments.toOwnedSlice(),
+            );
         },
-        .instance => |_| @panic("Unimplemented"),
-        //
-        //
-        //
-        //
-        //
-        //
-        //
-        //
+        .instance => |instance| {
+            _ = instance; // autofix
+
+            @panic("Unimplemented");
+        },
         else => blk: {
             defer arguments.deinit();
             runtime_token = call.paren;
@@ -407,16 +398,19 @@ fn visitGetExpr(self: *Self, get: Expr.Get) Error!Value {
             //   }
             //
 
-            logger.warn(.default, @src(), "DOING: .class {any} for call: {s}", .{ get, instance.toString() });
-            const out: Value = instance.get(self, get.name);
-            switch (out) {
-                .nil => try handleRuntimeError(error.non_instance_property),
-                else => {},
+            logger.warn(.default, @src(), "DOING: .class {any} for call: {s}", .{ get, try instance.callable.toString() });
+            const is_implemented = false;
+            if (comptime is_implemented) {
+                const out: Value = instance.callable.get(self, get.name);
+                switch (out) {
+                    .nil => try handleRuntimeError(error.non_instance_property),
+                    else => {},
+                }
+
+                break :blk out;
+            } else {
+                break :blk Value.Nil;
             }
-
-            break :blk out;
-
-            // break :blk Value.Nil;
         },
         else => blk: {
             // Note: In Lox, only class instances can have properties.
@@ -599,10 +593,7 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
             // self.environment);
             //     `Value not callable ''.`
 
-            const cls: *Value.LoxClass = try ClassContext.createLoxClass(
-                self.allocator,
-                class.name.lexeme,
-            );
+            const cls: *Class = try Class.init(self.allocator, class.name);
             // const cls: *Value.LoxClass = try self.allocator.create(Value.LoxClass);
             errdefer self.allocator.destroy(cls);
 

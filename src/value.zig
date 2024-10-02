@@ -2,15 +2,16 @@ const std = @import("std");
 const assert = std.debug.assert;
 const testing = std.testing;
 
+const Callable = @import("callable.zig");
+const Class = @import("class.zig");
 const Expr = @import("expr.zig").Expr;
+const Function = @import("function.zig");
+const Instance = @import("instance.zig");
 const Interpreter = @import("interpreter.zig");
 const Token = @import("token.zig");
 const formatNumber = @import("root.zig").formatNumber;
 const logger = @import("logger.zig");
 const root = @import("root.zig");
-
-const Callable = @import("callable.zig");
-const Function = @import("function.zig");
 
 pub const Value = union(enum) {
     bool: bool,
@@ -28,9 +29,11 @@ pub const Value = union(enum) {
     function: *FunctionValue,
 
     /// Extends `LoxCallable`.
-    class: *LoxClass,
+    // class: *LoxClass,
+    class: *ClassValue,
     /// Extends `LoxClass` i.e. (the runtime representation of a class instance).
-    instance: *LoxInstance,
+    // instance: *LoxInstance,
+    instance: *InstanceValue,
 
     comptime {
         assert(@sizeOf(@This()) == 24);
@@ -40,6 +43,10 @@ pub const Value = union(enum) {
     pub const Nil = Value{ .nil = {} };
     pub const True = Value{ .bool = true };
     pub const False = Value{ .bool = !true };
+    pub const CallableValue = Callable;
+    pub const FunctionValue = Function;
+    pub const ClassValue = Class;
+    pub const InstanceValue = Instance;
 
     pub inline fn from(x: anytype) Value {
         return switch (@TypeOf(x)) {
@@ -70,12 +77,20 @@ pub const Value = union(enum) {
                 function.callable.toString() catch |err| root.exit(.runtime_error, "{any}", .{err}),
                 function.callable.arity(),
             }),
+            .class => |class| try std.fmt.format(writer, "{s}(<arity {d}>)", .{
+                class.callable.toString() catch |err| root.exit(.runtime_error, "{any}", .{err}),
+                class.callable.arity(),
+            }),
+            .instance => |instance| try std.fmt.format(writer, "{s}(<arity {d}>)", .{
+                instance.callable.toString() catch |err| root.exit(.runtime_error, "{any}", .{err}),
+                instance.callable.arity(),
+            }),
 
-            inline .class, .instance => |c| try std.fmt.format(
-                writer,
-                "{s}(<arity {d}>)",
-                .{ c.*.toString(), c.*.arity() },
-            ),
+            // inline .class, .instance => |c| try std.fmt.format(
+            //     writer,
+            //     "{s}(<arity {d}>)",
+            //     .{ c.callable.toString(), c.*.arity() },
+            // ),
         }
     }
 
@@ -102,9 +117,6 @@ pub const Value = union(enum) {
             };
         }
     };
-
-    pub const CallableValue = Callable;
-    pub const FunctionValue = Function;
 
     // pub const LoxFunction = struct {
     //     /// `Context` pointer to hold function-specific data.
