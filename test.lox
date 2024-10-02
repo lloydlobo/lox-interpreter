@@ -1,98 +1,133 @@
 print "file: test.lox";
 
-// Invalid return errors
-// return "at top level";
 
-27 - 60 >= -99 * 2 / 99 + 76;
+print "# Class";
 
-// `clock()` is a global function baked in, just like `print()` is.
-// Tested approx at UTC timestamp: 20240928053409UTC
-print clock(); //> 1727501631.727
+class Bagel { };
 
-// TODO: Use []const u8 as key for `locals` autohashmap, instead of *Expr.
-// UNLESS, it prevents us from nesting similar named functions/variables.. etc
-// in differentt blocks/scopes.
-
-print "# Resolution Errors";
-
-var a = "first";
-// TODO: Add support for resolver to populate assigns in local/globals or defer
-// interpreter to use the environment for now
-// Also should this be an error or a feature?
-//
-{
-    a = "second";
-    print a;
-}
-a = "third";
-print a; //> third
-{
-    // [line 30] Error at 'a': Can't read local variable in its own initializer.
-    // How do other languages you know handle local variables that refer to the
-    // same name in their initializer, like:
-    //
-    // Is it a runtime error? Compile error? Allowed? Do they treat global
-    // variables differently? Do you agree with their choices? Justify your
-    // answer.
-    // var a = a;
-}
-
-// TODO: Extend the resolver to report an error if a local variable is never used.
-{ 
-    var unused_variable_foo = 1;
-}
-
-
-fun global_function() {
-    print "in global_function";
-}
-
-global_function();
+print Bagel; // Prints "Bagel".
+var bagel = Bagel();
+print bagel; // Prints "Bagel instance".
 
 
 {
-    print "in a block";
+    print "## Class ─ Set Expr";
 
-    fun bar_function() {
-        print "in bar_function.. that is inside a block";
-    }
+    var value = 42;
+    print "setting value of bagel.some_property...";
+    print value;
+    bagel.some_property = value;
+    bagel.nil_property = nil;
 
-    bar_function();
+    print "## Class ─ Get Expr";
+
+    print "getting value of bagel.some_property...";
+    print bagel.some_property;
+    print bagel.nil_property;
 }
 
 
-fun foo_function() {
-    print "in foo_function";
+print "## Class ─ Methods";
 
-    fun bar_function() {
-        print "in bar_function.. that is inside foo_function";
-        return nil;
-    }
-
-    print(bar_function());
-}
-
-foo_function();
-
-print "Ancestor environment traversal";
 {
-    var a_1 = 1;
-    var a_2 = 2;
+    print "### Class ─ Methods: Devonshire_Cream";
 
-    {
-        var b_1 = 3;
-        var b_2 = 4;
-
-        {
-
-            print a_1;
-
-            {
-                print b_2;
-            }
-
+    class Devonshire_Cream {
+        serve_on() {
+            return "Scones";
         }
+    };
+    print Devonshire_Cream; // Prints "Devonshire_Cream".
+
+    var devonshire_cream = Devonshire_Cream();
+    print devonshire_cream; // Prints "Devonshire_Cream instance".
+
+    // FIXME: See https://craftinginterpreters.com/classes.html#methods-on-classes
+    // Undefined property 'serve_on'.
+    print devonshire_cream.serve_on();
+}
+
+{
+    print "### Class ─ Methods: Object";
+
+    class Object { };
+    var object = Object();
+
+    fun add_2_fun(arg) {
+        return arg + 2;
     }
+
+    object.method_add_2 = add_2_fun;
+    print object.method_add_2; //> <fn add_2_fun>
+
+    var add_2 = object.method_add_2;
+    print add_2; //> <fn add_2_fun>
+    print add_2(40); //> 42 i.e. `method(argument)`
+}
+
+{
+    print "### Class ─ Methods: method as instances's function";
+
+    class Box {};
+
+    fun not_method(argument) {
+        print "called function with " + argument;
+    }
+
+    var box = Box();
+    box.function = not_method;
+    box.function("argument"); //> called function with argument
+
+    print(box.function); //> <fn not_method>
+    print(nil == box.function("another argument")); //> true
+
+    // breakfast(omlette.filled_with(cheese), sausage);
+    //
+    //   turn it into this:
+    //
+    // var eggs = omlette.filled_with(cheese);
+    // breakfast(eggs, sausage);
+
+    // fun callback(a, b, c) {
+    //     object.method(a, b, c);
+    // }
+    // take_callback(callback);
+    //
+    //   turn it into this:
+    //
+    // take_callback(object.method);
+
+    class Person {
+        // say_name() {
+        //     print this.name;
+        // }
+
+        say_name(self) {
+            print self.name;
+        }
+    };
+
+    var jane = Person();
+    jane.name = "Jane";
+
+    var bill = Person();
+    bill.name = "Bill";
+
+    print jane.name; //> Jane
+    print bill.name; //> Bill
+
+    // Still confused?
+    bill.say_name = jane.say_name;
+    bill.say_name(bill); //> Bill
+    bill.name = jane.name;
+    bill.say_name(bill); //> Jane
+
+    class Bacon {
+        eat() {
+            print "Crunch crunch crunch!";
+        }
+    };
+    Bacon().eat(); //> Crunch crunch crunch!
 }
 
 

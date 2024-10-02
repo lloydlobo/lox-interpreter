@@ -2,18 +2,23 @@ const std = @import("std");
 const assert = std.debug.assert;
 const testing = std.testing;
 
+const Callable = @import("callable.zig");
 const Interpreter = @import("interpreter.zig");
 const Token = @import("token.zig");
+const Value = @import("value.zig").Value;
 const formatNumber = @import("root.zig").formatNumber;
 const logger = @import("logger.zig");
+const root = @import("root.zig");
 
 pub const Expr = union(enum) {
     assign: Assign,
     binary: Binary,
     call: Call,
+    get: Get,
     grouping: *Expr,
     literal: Value,
     logical: Logical,
+    set: Set,
     unary: Unary,
     variable: Token,
 
@@ -44,144 +49,30 @@ pub const Expr = union(enum) {
         arguments: []*Expr,
     };
 
+    pub const Get = struct {
+        object: *Expr,
+        name: Token,
+    };
+
     pub const Logical = struct {
         left: *Expr,
         operator: Token,
         right: *Expr,
     };
 
+    pub const Set = struct {
+        object: *Expr,
+        name: Token,
+        value: *Expr,
+    };
+
     pub const Unary = struct {
         operator: Token,
         right: *Expr,
     };
-
-    pub const Value = union(enum) {
-        bool: bool,
-        callable: *LoxCallable,
-        function: *LoxFunction,
-        nil: void,
-        num: f64,
-        ret: *LoxReturnValue,
-        str: []const u8,
-
-        comptime {
-            assert(@sizeOf(@This()) == 24);
-            assert(@alignOf(@This()) == 8);
-        }
-
-        pub const Nil = Value{ .nil = {} };
-        pub const True = Value{ .bool = true };
-        pub const False = Value{ .bool = !true };
-
-        pub const LoxCallable = struct { // native function
-            arityFn: *const fn () usize,
-            callFn: *const fn (*Interpreter, []Value) Value,
-            toStringFn: *const fn () []const u8,
-
-            comptime {
-                assert(@sizeOf(@This()) == 24);
-                assert(@alignOf(@This()) == 8);
-            }
-
-            pub fn arity(self: *const LoxCallable) usize {
-                return self.arityFn();
-            }
-
-            pub fn call(
-                self: *const LoxCallable,
-                interpreter: *Interpreter,
-                arguments: []Value,
-            ) Value {
-                return self.callFn(interpreter, arguments);
-            }
-
-            pub fn toString(self: *const LoxCallable) []const u8 {
-                return self.toStringFn();
-            }
-        };
-
-        pub const LoxFunction = struct {
-            arityFn: *const fn (*anyopaque) usize,
-            callFn: *const fn (*anyopaque, *Interpreter, []Value) Value,
-            toStringFn: *const fn (*anyopaque) []const u8,
-            /// `Context` pointer to hold function-specific data.
-            context: *anyopaque,
-
-            comptime {
-                assert(@sizeOf(@This()) == 32);
-                assert(@alignOf(@This()) == 8);
-            }
-
-            pub fn arity(self: *LoxFunction) usize {
-                return self.arityFn(self.context);
-            }
-
-            pub fn call(self: *LoxFunction, interpreter: *Interpreter, arguments: []Value) Value {
-                return self.callFn(self.context, interpreter, arguments);
-            }
-
-            pub fn toString(self: *LoxFunction) []const u8 {
-                return self.toStringFn(self.context);
-            }
-        };
-
-        pub inline fn from(x: anytype) Value {
-            return switch (@TypeOf(x)) {
-                usize, i32, comptime_int => Value{ .num = @as(f64, @floatFromInt(x)) },
-                f64, comptime_float => Value{ .num = x },
-                void => Nil,
-                else => |@"type"| {
-                    logger.err(.{}, @src(), "Unimplemented case for type {any}.", .{@"type"});
-                    @panic("Unimplemented");
-                },
-            };
-        }
-
-        pub fn format(self: Value, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            switch (self) {
-                .bool => |bool_| try std.fmt.format(writer, "{}", .{bool_}),
-                .callable => |lox_callable_ptr| try std.fmt.format(writer, "{s}(<arity {d}>)", .{
-                    lox_callable_ptr.*.toString(),
-                    lox_callable_ptr.*.arity(),
-                }),
-                .function => |lox_function_ptr| try std.fmt.format(writer, "{s}(<arity {d}>)", .{
-                    lox_function_ptr.*.toString(),
-                    lox_function_ptr.*.arity(),
-                }),
-                .nil => try std.fmt.format(writer, "nil", .{}),
-                .num => |@"f64"| try formatNumber(writer, @"f64"),
-                .ret => |lox_return_value_ptr| try std.fmt.format(writer, "{any}", .{lox_return_value_ptr}),
-                .str => |@"[]const u8"| try std.fmt.format(writer, "{s}", .{@"[]const u8"}),
-            }
-        }
-    };
-
-    pub const LoxReturnValue = union(enum) {
-        nil: void,
-        ret: Value,
-
-        comptime {
-            assert(@sizeOf(@This()) == 32);
-            assert(@alignOf(@This()) == 8);
-        }
-
-        pub fn fromValue(value: ?Value) LoxReturnValue {
-            return if (value) |v| switch (v) {
-                .nil => .{ .ret = Value.Nil },
-                else => |x| .{ .ret = x },
-            } else .{ .ret = Value.Nil };
-        }
-
-        pub fn toValue(self: *LoxReturnValue) Value {
-            return switch (self.*) {
-                .nil => Value.Nil,
-                .ret => |x| x,
-            };
-        }
-    };
 };
 
-test "basic usage" {
+test "Expr ─ basic usage" {
     try testing.expectEqual(0, @sizeOf(@This()));
     try testing.expectEqual(1, @alignOf(@This()));
 }
@@ -264,29 +155,50 @@ test "basic usage" {
 //   abstract <R> R accept(Visitor<R> visitor);
 // }
 
-// assign →
-// binary → expression operator expression ;
-// call → primary ( "(" arguments? ")" )* ;
-// grouping → "(" expression ")" ;
-// literal → NUMBER | STRING | "true" | "false" | "nil" ;
-// logic_or       → logic_and ( "or" logic_and )* ;
+//
+// assignment     → ( call "." )? IDENTIFIER "=" assignment | logic_or ;
+// binary         → expression operator expression ;
+// call           → primary ( "(" arguments? ")" | "." IDENTIFIER )* ;
+// grouping       → "(" expression ")" ;
+// literal        → NUMBER | STRING | "true" | "false" | "nil" ;
 // logic_and      → equality ( "and" equality )* ;
-// unary → ( "-" | "!" ) expression ;
-// variable →
+// logic_or       → logic_and ( "or" logic_and )* ;
+// unary          → ( "-" | "!" ) expression ;
+// variable       →
 //
-// operator → "==" | "!=" | "<" | "<=" | ">" | ">=" | "+"  | "-"  | "*" | "/" ;
+// operator       → "==" | "!=" | "<" | "<=" | ">" | ">=" | "+"  | "-"  | "*" | "/" ;
 //
-// "Binary    : Expr left, Token operator, Expr right"
-// "Call     : Expr callee, Token paren, List<Expr> arguments"
-// "Logical  : Expr left, Token operator, Expr right",
-//      Avoids binary visit method see if operator is one of the logical
-//      operators and use a different code path to handle the short circuiting.
-// "Unary    : Token operator, Expr right"
-// "Literal  : Object value"
-//
-// arguments: []*Expr, // → expression ( "," expression )* ;
+// "Binary        : Expr left, Token operator, Expr right",
+// "Call          : Expr callee, Token paren, List<Expr> arguments",
+// "Get           : Expr object, Token name",
+// "Literal       : Object value",
+// "Logical       : Expr left, Token operator, Expr right",,
+// "Set           : Expr object, Token name, Expr value",
+// "Unary         : Token operator, Expr right",
 
+// "Block         : List<Stmt> statements",
+// "Class         : Token name, List<Stmt.Function> methods",
+// "Expression    : Expr expression",
+// "Function      : Token name, List<Token> params," + " List<Stmt> body",
+// "If            : Expr condition, Stmt thenBranch," +
+
+// arguments      → expression ( "," expression )* ;
+//
+// declaration    → classDecl | funDecl | varDecl | statement ;
+//
+// funDecl        → "fun" function ;
+// function       → IDENTIFIER "(" parameters? ")" block ;
+// parameters     → IDENTIFIER ( "," IDENTIFIER )* ;
+//
+// classDecl      → "class" IDENTIFIER "{" function* "}" ;
+
+// Note: The new classDecl rule relies on the function rule we defined earlier. To refresh your memory:
+
+//
+//
 // Docs
+//
+//
 
 // Value.LoxReturnValue
 // If we have a return value, we evaluate it, otherwise, we use nil.
@@ -296,3 +208,8 @@ test "basic usage" {
 
 // Value.from()
 // See https://gitlab.com/andreyorst/lox/-/blob/main/src/zig/lox/value.zig?ref_type=heads#L253
+
+// Expr.Set
+// Unlike getters, setters don’t chain. However, the reference to call allows
+// any high-precedence expression before the last dot, including any number of
+// getters, as in:

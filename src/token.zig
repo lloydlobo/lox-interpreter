@@ -7,14 +7,27 @@ const formatNumber = @import("root.zig").formatNumber;
 
 const Token = @This();
 
+/// `foo` in "var foo = 42;"
 lexeme: []const u8,
-line: u32, // Initial is 1.
+// Initial line number is 1.
+line: u32,
+/// `42` in "var foo = 42;"
 literal: ?Literal,
+/// The `Token` `Type`.
 type: Type,
 
 comptime {
     assert(@sizeOf(@This()) == 56);
     assert(@alignOf(@This()) == 8);
+}
+
+pub fn format(self: Token, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    var buf: [32]u8 = undefined;
+    try std.fmt.format(writer, "{s} {s} {?}", .{
+        std.ascii.upperString(&buf, @tagName(self.type)),
+        self.lexeme,
+        self.literal,
+    });
 }
 
 pub fn make(lexeme: []const u8, line: u32, literal: ?Literal, @"type": Type) Token {
@@ -116,16 +129,75 @@ pub const Literal = union(enum) {
     }
 };
 
-pub fn format(self: Token, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-    var buf: [32]u8 = undefined;
-    try std.fmt.format(writer, "{s} {s} {?}", .{
-        std.ascii.upperString(&buf, @tagName(self.type)),
-        self.lexeme,
-        self.literal,
+pub const TypeSet = std.EnumSet(Token.Type);
+
+/// Namespace for `TypeSet` that expands to `std.EnumSet(Token.Type)`.
+pub const TypeSets = struct {
+    pub const @"and" = &TypeSet.initOne(.@"and");
+    pub const assignment = &TypeSet.initOne(.equal);
+    pub const @"break" = &TypeSet.initOne(.@"break");
+    pub const class = &TypeSet.initOne(.class);
+    pub const comma = &TypeSet.initOne(.comma);
+    pub const declaration = &TypeSet.initOne(.equal);
+    pub const dot = &TypeSet.initOne(.dot);
+    pub const @"else" = &TypeSet.initOne(.@"else");
+    pub const @"false" = &TypeSet.initOne(.false);
+    pub const @"for" = &TypeSet.initOne(.@"for");
+    pub const fun = &TypeSet.initOne(.fun);
+    pub const identifier = &TypeSet.initOne(.identifier);
+    pub const @"if" = &TypeSet.initOne(.@"if");
+    /// block
+    pub const left_brace = &TypeSet.initOne(.left_brace);
+    /// grouping or call
+    pub const left_paren = &TypeSet.initOne(.left_paren);
+    pub const nil = &TypeSet.initOne(.nil);
+    pub const @"or" = &TypeSet.initOne(.@"or");
+    pub const print = &TypeSet.initOne(.print);
+    pub const @"return" = &TypeSet.initOne(.@"return");
+    pub const semicolon = &TypeSet.initOne(.semicolon);
+    pub const @"true" = &TypeSet.initOne(.true);
+    pub const @"var" = &TypeSet.initOne(.@"var");
+    pub const @"while" = &TypeSet.initOne(.@"while");
+
+    /// unary
+    pub const bang_minus = &TypeSet.initMany(&[_]Type{ .bang, .minus });
+    pub const comparison = &TypeSet.initMany(&[_]Type{ .greater, .greater_equal, .less, .less_equal });
+    pub const equality = &TypeSet.initMany(&[_]Type{ .bang_equal, .equal_equal });
+    /// term
+    pub const minus_plus = &TypeSet.initMany(&[_]Type{ .minus, .plus });
+    /// primary
+    pub const number_string = &TypeSet.initMany(&[_]Type{ .number, .string });
+    /// factor
+    pub const slash_star = &TypeSet.initMany(&[_]Type{ .slash, .star });
+
+    pub const single_char = TypeSet.initMany(.{
+        .bang,      .comma,      .dot,         .equal,
+        .greater,   .left_brace, .left_paren,  .less,
+        .minus,     .plus,       .right_brace, .right_paren,
+        .semicolon, .slash,      .star,
     });
+
+    pub const multi_char = TypeSet.initMany(.{
+        .bang_equal,    .equal_equal,
+        .greater_equal, .less_equal,
+    });
+
+    pub const literals = TypeSet.initMany(.{ .identifier, .number, .string });
+
+    pub const keywords = TypeSet.initMany(.{
+        .@"and",   .@"break", .class, .@"else",
+        .false,    .@"for",   .fun,   .@"if",
+        .nil,      .@"or",    .print, .@"return",
+        .super,    .this,     .true,  .@"var",
+        .@"while",
+    });
+};
+
+comptime {
+    assert(TypeSets.assignment.*.eql(TypeSets.declaration.*));
 }
 
-// copied from lib/std/multi_array_list.zig
+// Copied from lib/std/multi_array_list.zig
 test "basic usage with MultiArrayList" {
     const ally = testing.allocator;
     var list = std.MultiArrayList(Token){};
@@ -168,7 +240,11 @@ test "basic usage with MultiArrayList" {
 
     try testing.expectEqualSlices(u32, list.items(.line), &[_]u32{ 1, 2, 3 });
     try testing.expectEqualSlices([]const u8, list.items(.lexeme), &[_][]const u8{ "a", "b", "c" });
-    try testing.expectEqualSlices(?Token.Literal, list.items(.literal), &[_]?Token.Literal{ .{ .str = "hello" }, .{ .str = "world" }, .{ .str = "!" } });
+    try testing.expectEqualSlices(?Token.Literal, list.items(.literal), &[_]?Token.Literal{
+        .{ .str = "hello" },
+        .{ .str = "world" },
+        .{ .str = "!" },
+    });
 
     try testing.expectEqual(@as(usize, 3), list.items(.lexeme).len);
     try testing.expectEqualStrings("a", list.items(.lexeme)[0]);
@@ -209,7 +285,11 @@ test "basic usage with MultiArrayList" {
 
     try testing.expectEqualSlices(u32, list.items(.line), &[_]u32{ 1, 2, 3 });
     try testing.expectEqualSlices([]const u8, list.items(.lexeme), &[_][]const u8{ "a", "b", "c" });
-    try testing.expectEqualSlices(?Token.Literal, list.items(.literal), &[_]?Token.Literal{ .{ .str = "hello" }, .{ .str = "world" }, .{ .str = "!" } });
+    try testing.expectEqualSlices(?Token.Literal, list.items(.literal), &[_]?Token.Literal{
+        .{ .str = "hello" },
+        .{ .str = "world" },
+        .{ .str = "!" },
+    });
 
     try testing.expectEqual(@as(usize, 3), list.items(.lexeme).len);
     try testing.expectEqualStrings("a", list.items(.lexeme)[0]);

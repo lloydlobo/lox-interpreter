@@ -11,8 +11,11 @@ const Expr = @import("expr.zig").Expr;
 const Scanner = @import("scanner.zig").Scanner;
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
+const TypeSets = @import("token.zig").TypeSets;
+const Value = @import("value.zig").Value;
 const debug = @import("debug.zig");
 const root = @import("root.zig");
+const logger = @import("logger.zig");
 const tokenError = @import("main.zig").tokenError;
 
 const Parser = @This();
@@ -117,21 +120,27 @@ fn previousType(self: *const Parser) Token.Type {
     return self.tokens.items(.type)[self.current - 1];
 }
 
-fn previousValue(self: *const Parser) Expr.Value {
+fn previousValue(self: *const Parser) Value {
     return if (self.previousLiteral()) |literal| switch (literal) {
         .str => |val| .{ .str = val },
         .num => |val| .{ .num = val },
     } else unreachable;
 }
 
-// match is short for consumeToken()
-fn match(self: *Parser, types: anytype) bool {
-    return inline for (std.meta.fields(@TypeOf(types))) |field| {
-        if (self.check(@field(types, field.name))) {
-            _ = self.advance();
-            break true;
-        }
-    } else false;
+/// match is short for consumeToken()
+fn match(self: *Parser, comptime types: *const Token.TypeSet) bool {
+    // fn match(self: *Parser, types: anytype) bool {
+    //    return inline for (std.meta.fields(@TypeOf(types))) |field| {
+    //        if (self.check(@field(types, field.name))) {
+    //            _ = self.advance();
+    //            break true;
+    //        }
+    //    } else false;
+    // }
+    return (types.contains(self.currentType()) and blk: {
+        _ = self.advance();
+        break :blk true;
+    });
 }
 
 fn consume(self: *Parser, @"type": Token.Type, comptime message: []const u8) Error!Token {
@@ -151,31 +160,35 @@ fn advance(self: *Parser) Token {
     return self.previous();
 }
 
+//
+//
 // Grammar implementation
 //
 // Precedence: expression → equality → comparison → term → factor → unary → primary
+//
+//
 
 /// primary → NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" ;
 fn primary(self: *Parser) Error!*Expr {
-    if (self.match(.{.false})) {
-        return try self.createExpr(.{ .literal = Expr.Value.False });
+    if (self.match(TypeSets.false)) {
+        return try self.createExpr(.{ .literal = Value.False });
     }
-    if (self.match(.{.true})) {
-        return try self.createExpr(.{ .literal = Expr.Value.True });
+    if (self.match(TypeSets.true)) {
+        return try self.createExpr(.{ .literal = Value.True });
     }
-    if (self.match(.{.nil})) {
-        return try self.createExpr(.{ .literal = Expr.Value.Nil });
+    if (self.match(TypeSets.nil)) {
+        return try self.createExpr(.{ .literal = Value.Nil });
     }
-    if (self.match(.{ .number, .string })) {
+    if (self.match(TypeSets.number_string)) {
         return try self.createExpr(.{ .literal = self.previousValue() });
     }
-    if (self.match(.{.left_paren})) { //`(` grouping precedence - recursion: primary() |> expression()
+    if (self.match(TypeSets.left_paren)) { //`(` grouping precedence - recursion: primary() |> expression()
         const expr = try self.expression();
         _ = try self.consume(.right_paren, "Expect ')' after expression."); //`)`
 
         return try self.createExpr(.{ .grouping = expr });
     }
-    if (self.match(.{.identifier})) { // variable precedence: from declaration() |> primary()
+    if (self.match(TypeSets.identifier)) { // variable precedence: from declaration() |> primary()
         return try self.createExpr(.{ .variable = self.previous() });
     }
 
@@ -185,8 +198,27 @@ fn primary(self: *Parser) Error!*Expr {
 fn call(self: *Parser) Error!*Expr {
     var expr: *Expr = try self.primary();
 
-    while (self.match(.{.left_paren})) {
-        expr = try self.finishCall(expr);
+    // The outer while loop there corresponds to the * in the grammar rule. We
+    // zip along the tokens building up a chain of calls and gets as we find
+    // parentheses and dots, like so:
+    // See https://craftinginterpreters.com/image/classes/zip.png
+    while (true) {
+        if (self.match(TypeSets.left_paren)) {
+            expr = try self.finishCall(expr);
+        } else if (self.match(TypeSets.dot)) { // method
+            const name: Token = try self.consume(
+                .identifier,
+                "Expect property name after '.'.",
+            );
+
+            expr = try self.createExpr(.{ .get = .{
+                .name = name,
+                .object = expr,
+            } });
+            logger.warn(.default, @src(), "In call(), dot method, name: {any}, expr: {any}", .{ name, expr });
+        } else {
+            break;
+        }
     }
 
     return expr;
@@ -199,7 +231,7 @@ fn finishCall(self: *Parser, callee: *Expr) Error!*Expr {
     var arg_count: u8 = 0;
     if (!self.check(.right_paren)) {
         var do = true;
-        while (do or self.match(.{.comma})) {
+        while (do or self.match(TypeSets.comma)) {
             do = false;
             arg_count += 1; // defer?
             try arguments.append(try self.expression());
@@ -222,7 +254,7 @@ fn finishCall(self: *Parser, callee: *Expr) Error!*Expr {
 
 /// unary → ( "!" | "-" ) unary | primary ;
 fn unary(self: *Parser) Error!*Expr {
-    if (self.match(.{ .bang, .minus })) {
+    if (self.match(TypeSets.bang_minus)) {
         const operator: Token = self.previous();
         const right: *Expr = try self.unary(); // recursion to same precedence level
 
@@ -237,9 +269,9 @@ fn unary(self: *Parser) Error!*Expr {
 
 /// factor → unary ( ( "/" | "*" ) unary )* ;
 fn factor(self: *Parser) Error!*Expr {
-    var expr = try self.unary();
+    var expr: *Expr = try self.unary();
 
-    while (self.match(.{ .slash, .star })) {
+    while (self.match(TypeSets.slash_star)) {
         const operator: Token = self.previous();
         const right: *Expr = try self.unary();
 
@@ -255,9 +287,9 @@ fn factor(self: *Parser) Error!*Expr {
 
 /// term → factor ( ( "-" | "+" ) factor )* ;
 fn term(self: *Parser) Error!*Expr {
-    var expr = try self.factor();
+    var expr: *Expr = try self.factor();
 
-    while (self.match(.{ .minus, .plus })) {
+    while (self.match(TypeSets.minus_plus)) {
         const operator: Token = self.previous();
         const right: *Expr = try self.factor();
 
@@ -273,9 +305,9 @@ fn term(self: *Parser) Error!*Expr {
 
 /// comparison → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
 fn comparison(self: *Parser) Error!*Expr {
-    var expr = try self.term();
+    var expr: *Expr = try self.term();
 
-    while (self.match(.{ .greater, .greater_equal, .less, .less_equal })) {
+    while (self.match(TypeSets.comparison)) {
         const operator: Token = self.previous();
         const right: *Expr = try self.term();
 
@@ -291,9 +323,9 @@ fn comparison(self: *Parser) Error!*Expr {
 
 /// equality → comparison ( ( "!=" | "==" ) comparison )* ;
 fn equality(self: *Parser) Error!*Expr {
-    var expr = try self.comparison();
+    var expr: *Expr = try self.comparison();
 
-    while (self.match(.{ .bang_equal, .equal_equal })) {
+    while (self.match(TypeSets.equality)) {
         const operator: Token = self.previous();
         const right: *Expr = try self.comparison();
 
@@ -310,7 +342,7 @@ fn equality(self: *Parser) Error!*Expr {
 fn andExpr(self: *Parser) Error!*Expr {
     var expr: *Expr = try self.equality();
 
-    while (self.match(.{.@"and"})) {
+    while (self.match(TypeSets.@"and")) {
         const operator: Token = self.previous();
         const right: *Expr = try self.equality();
 
@@ -327,7 +359,7 @@ fn andExpr(self: *Parser) Error!*Expr {
 fn orExpr(self: *Parser) Error!*Expr {
     var expr: *Expr = try self.andExpr();
 
-    while (self.match(.{.@"or"})) {
+    while (self.match(TypeSets.@"or")) {
         const operator: Token = self.previous();
         const right: *Expr = try self.andExpr();
 
@@ -344,7 +376,7 @@ fn orExpr(self: *Parser) Error!*Expr {
 fn assignment(self: *Parser) Error!*Expr {
     const expr: *Expr = try self.orExpr();
 
-    if (self.match(.{.equal})) {
+    if (self.match(TypeSets.assignment)) { // → .equal → `=`
         const equals: Token = self.previous();
         const value: *Expr = try self.assignment();
 
@@ -353,6 +385,19 @@ fn assignment(self: *Parser) Error!*Expr {
                 .name = name,
                 .value = value,
             } }),
+            .get => |get| blk: {
+                logger.debug(.default, @src(),
+                    \\Parsing assignment (Expr.Get -> Expr.Set).
+                    \\{s}get: '{}'.
+                    \\{s}expr: '{}'.
+                , .{ logger.indent, get, logger.indent, expr });
+                break :blk try self.createExpr(.{ .set = .{
+                    .object = get.object,
+                    .name = get.name,
+                    .value = value,
+                } });
+            },
+
             else => parseError(equals, "Invalid assignment target."),
         };
     }
@@ -430,7 +475,7 @@ fn ifStatement(self: *Parser) Error!Stmt {
         .condition = condition,
         .then_branch = try self.createStmt(try self.statement()),
         .else_branch = blk: {
-            if (self.match(.{.@"else"})) {
+            if (self.match(TypeSets.@"else")) {
                 break :blk try self.createStmt(try self.statement());
             } else {
                 break :blk null;
@@ -464,9 +509,9 @@ fn forStatement(self: *Parser) Error!Stmt {
 
     // Clause 1
     const initializer = blk: {
-        if (self.match(.{.semicolon})) {
+        if (self.match(TypeSets.semicolon)) {
             break :blk null; // no initializer
-        } else if (self.match(.{.@"var"})) {
+        } else if (self.match(TypeSets.@"var")) {
             break :blk try self.varDeclaration(); // variable
         } else {
             break :blk try self.expressionStatement();
@@ -568,13 +613,13 @@ fn returnStatement(self: *Parser) Error!Stmt {
 }
 
 fn statement(self: *Parser) Error!Stmt {
-    if (self.match(.{.@"if"})) return self.ifStatement();
-    if (self.match(.{.@"for"})) return self.forStatement();
-    if (self.match(.{.print})) return self.printStatement();
-    if (self.match(.{.@"return"})) return self.returnStatement();
-    if (self.match(.{.@"while"})) return self.whileStatement();
-    if (self.match(.{.left_brace})) return .{ .block = try self.block() };
-    if (self.match(.{.@"break"})) return self.breakStatement();
+    if (self.match(TypeSets.@"if")) return self.ifStatement();
+    if (self.match(TypeSets.@"for")) return self.forStatement();
+    if (self.match(TypeSets.print)) return self.printStatement();
+    if (self.match(TypeSets.@"return")) return self.returnStatement();
+    if (self.match(TypeSets.@"while")) return self.whileStatement();
+    if (self.match(TypeSets.left_brace)) return .{ .block = try self.block() };
+    if (self.match(TypeSets.@"break")) return self.breakStatement();
 
     return self.expressionStatement(); // finally identifier
 }
@@ -584,7 +629,7 @@ fn varDeclaration(self: *Parser) Error!Stmt {
 
     const name: Token = try self.consume(.identifier, "Expect variable name.");
     const value: ?*Expr = blk: {
-        if (self.match(.{.equal})) {
+        if (self.match(TypeSets.declaration)) {
             break :blk try self.expression();
         } else {
             break :blk null;
@@ -600,8 +645,10 @@ fn varDeclaration(self: *Parser) Error!Stmt {
     return stmt;
 }
 
-fn fnDeclaration(self: *Parser, comptime kind: []const u8) Error!Stmt {
-    assert(self.checkPrevious(.fun));
+fn functionDeclaration(self: *Parser, comptime kind: []const u8) Error!Stmt {
+    if (mem.eql(u8, kind, Stmt.Function.function_kind)) {
+        assert(self.checkPrevious(.fun));
+    }
 
     const name: Token = try self.consume(.identifier, "Expect " ++ kind ++ " name.");
     _ = try self.consume(.left_paren, "Expect '(' after " ++ kind ++ " name.");
@@ -611,7 +658,7 @@ fn fnDeclaration(self: *Parser, comptime kind: []const u8) Error!Stmt {
 
     if (!self.check(.right_paren)) {
         var do = true;
-        while (do or self.match(.{.comma})) {
+        while (do or self.match(TypeSets.comma)) {
             do = false;
             if (parameters.items.len >= 255) {
                 return parseError(self.peek(), "Can't have more than 255 parameters.");
@@ -635,15 +682,43 @@ fn fnDeclaration(self: *Parser, comptime kind: []const u8) Error!Stmt {
     };
 
     return .{ .function = fun.* };
+
+    // See https://craftinginterpreters.com/functions.html#function-declarations
+}
+
+fn classDeclaration(self: *Parser, comptime kind: []const u8) Error!Stmt {
+    assert(self.checkPrevious(.class));
+
+    const name: Token = try self.consume(.identifier, "Expect " ++ kind ++ " name.");
+    _ = try self.consume(.left_brace, "Expect '{{' before " ++ kind ++ " body.");
+
+    var methods = std.ArrayList(Stmt.Function).init(self.allocator);
+    errdefer methods.deinit();
+
+    while (!self.check(.right_brace) and !self.isAtEnd()) {
+        const method: Stmt = try self.functionDeclaration(Stmt.Function.method_kind);
+        try methods.append(method.function);
+    }
+
+    _ = try self.consume(.right_brace, "Expect '}}' after " ++ kind ++ " body.");
+    _ = try self.consume(.semicolon, "Expect ';' after " ++ kind ++ " declaration.");
+
+    const class = try Stmt.Class.create(self.allocator);
+    class.* = .{
+        .name = name,
+        .methods = try methods.toOwnedSlice(),
+    };
+
+    return .{ .class = class.* };
 }
 
 fn declaration(self: *Parser) Allocator.Error!?Stmt {
     const stmt_result = blk: {
-        break :blk if (self.match(.{.class}))
-            @panic("Unimplemented")
-        else if (self.match(.{.fun}))
-            self.fnDeclaration("function")
-        else if (self.match(.{.@"var"}))
+        break :blk if (self.match(TypeSets.class))
+            self.classDeclaration(Stmt.Class.class_kind)
+        else if (self.match(TypeSets.fun))
+            self.functionDeclaration(Stmt.Function.function_kind)
+        else if (self.match(TypeSets.@"var"))
             self.varDeclaration()
         else
             self.statement();

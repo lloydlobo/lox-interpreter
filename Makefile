@@ -11,8 +11,10 @@ define generate_sources
 	$(wildcard src/*.zig)
 endef # or use `$(shell find src -name '*.zig')`
 
+# the project does not declare a preferred optimization mode. choose: --release=fast, --release=safe, or --release=small
+RELEASE_FLAGS := --release=fast
 TEST_FILE := test.lox
-TRACE_FLAGS :=  -freference-trace
+TRACE_FLAGS := -freference-trace
 VALGRIND := valgrind --leak-check=full --show-leak-kinds=all -s --track-origins=yes
 ZIG_FILES := $(call generate_sources)
 ZIG_SRCS := $(shell find src -name '*.zig' -not -name 'test_*.zig')
@@ -23,6 +25,16 @@ clean:
 	@date && echo $(UNAME_S)
 	rm -rf zig-out .zig-cache vgcore.*
 	echo $$?
+
+.PHONY: bench
+bench:
+	hyperfine --shell=none --warmup=25 --ignore-failure './zig-out/bin/main run test.lox' './zig-out/bin/main run test.lox'
+
+.PHONY: build
+build: $(ZIG_SRCS)
+	# Debug
+	@zig build --summary all $(TRACE_FLAGS) # $(RELEASE_FLAGS)
+
 
 # 	@$(foreach src,$(call generate_sources), \
 # 		# echo "Running ast-check on $(src)"; \
@@ -39,10 +51,10 @@ ast-check: $(ZIG_FILES)
 #		zig test $(src) $(TRACE_FLAGS); \
 #	)
 .PHONY: test-zig-srcs
-test-zig-srcs: $(ZIG_SRCS)
+test-zig-srcs: $(ZIG_SRCS) ./.zig-cache/o
 	@make ast-check
 	@echo "Running zig tests in parallel on $(ZIG_SRCS)"
-	@echo $(ZIG_SRCS) | tr ' ' '\n' | parallel -j $(shell nproc) --halt-on-error 1 'echo "Running zig test on {}"; zig ast-check {}; zig test {} $(TRACE_FLAGS);'
+	@echo $(ZIG_SRCS) | tr ' ' '\n' | parallel -j $(shell nproc) --halt soon,fail=3% 'echo "Running zig test on {}"; zig ast-check {}; zig test {} $(TRACE_FLAGS) 2>&1'
 
 .PHONY: test-zig-srcs
 SUPPRESS_STDERR_FLAGS := 2>&1 | head
@@ -58,10 +70,10 @@ test: $(ZIG_SRCS)
 	@date && echo $(UNAME_S)
 
 	# capture both stdout and stderr
-	zig test src/test_statements_and_state.zig $(TRACE_FLAGS) 2>&1 # | head &
-	zig test src/test_expressions_evaluate.zig $(TRACE_FLAGS) 2>&1 # | head &
-	zig test src/test_expressions_parse.zig    $(TRACE_FLAGS) 2>&1 # | head &
-	zig test src/test_scanning.zig             $(TRACE_FLAGS) 2>&1 # | head &
+	zig test src/test_statements_and_state.zig $(TRACE_FLAGS) 2>&1 | head &
+	zig test src/test_expressions_evaluate.zig $(TRACE_FLAGS) 2>&1 | head &
+	zig test src/test_expressions_parse.zig    $(TRACE_FLAGS) 2>&1 | head &
+	zig test src/test_scanning.zig             $(TRACE_FLAGS) 2>&1 | head &
 
 	wait
 
@@ -73,23 +85,23 @@ test: $(ZIG_SRCS)
 
 tokenize:
 	@make ast-check
-	@zig build --summary all
-	@$(EXE) tokenize test.lox && echo
+	@make build
+	$(EXE) tokenize test.lox $(TRACE_FLAGS) && echo
 
 parse:
 	@make ast-check
-	@zig build --summary all
-	@$(EXE) parse test.lox && echo
+	@make build
+	$(EXE) parse test.lox $(TRACE_FLAGS) && echo
 
 evaluate:
 	@make ast-check
-	@zig build --summary all
-	@$(EXE) evaluate test.lox && echo
+	@make build
+	$(EXE) evaluate test.lox $(TRACE_FLAGS) && echo
 
 run:
 	@make ast-check
-	@zig build --summary all
-	@$(EXE) run test.lox && echo
+	@make build
+	$(EXE) run test.lox $(TRACE_FLAGS) && echo
 
 
 .PHONY: valgrind-tokenize valgrind-parse valgrind-evaluate valgrind-run
@@ -98,7 +110,7 @@ run:
 pre-valgrind:
 	make ast-check
 	@echo "Building project from build.zig"
-	zig build --summary all
+	@make build
 
 valgrind-tokenize:
 	make -j4 pre-valgrind
@@ -134,11 +146,19 @@ EXAMPLE_FILES := $(call generate_example_sources)
 # )
 .PHONY: run-examples
 run-examples: $(EXAMPLE_FILES)
+	make ast-check
+	@echo "Building project from build.zig"
+	@make build
+	@printf "Running command 'run' on examples\n└─\x1b[37m$(EXAMPLE_FILES)\x1b[0m\n"
+	: "NOTE: halt on error is disabled. e.g: " parallel -j $(shell nproc) --halt-on-error 1 'printf ...'
+	@echo $(EXAMPLE_FILES) | tr ' ' '\n' | parallel -j $(shell nproc) 'printf "\x1b[37mInterpreting file\n└─ {} \x1b[0m\n"; $(EXE) run {} $(TRACE_FLAGS);'
+
+.PHONY: valgrind-run-examples
+valgrind-run-examples: $(EXAMPLE_FILES)
 	make -j4 pre-valgrind
 	@printf "Running command 'run' on examples\n└─\x1b[37m$(EXAMPLE_FILES)\x1b[0m\n"
 	: "NOTE: halt on error is disabled. e.g: " parallel -j $(shell nproc) --halt-on-error 1 'printf ...'
 	@echo $(EXAMPLE_FILES) | tr ' ' '\n' | parallel -j $(shell nproc) 'printf "\x1b[37mInterpreting file\n└─ {} \x1b[0m\n"; $(VALGRIND) $(EXE) run {} $(TRACE_FLAGS);'
-
 
 .PHONY: all
 

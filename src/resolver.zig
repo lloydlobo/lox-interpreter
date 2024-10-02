@@ -1,6 +1,10 @@
 //! Resolves each variable definition and usage with it's corresponding scope.
-//! Stores the scope number in the `locals` which is returned as an artifacto
-//! of calling the resolver.
+//!
+//! Stores the scope number in the `locals` which is returned as an artifact of
+//! calling the resolver.
+//!
+//! We do need to actually run the resolver, though. We insert the new pass
+//! after the parser does its magic.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -72,19 +76,19 @@ pub const Error = ResolveError || Allocator.Error;
 
 pub fn handleTokenError(err: Error, token: Token, comptime fmt: []const u8) Allocator.Error!void {
     return switch (err) {
-        error.variable_already_declared,
-        error.invalid_return,
-        error.unused_variable,
-        error.undefined_variable,
+        ResolveError.invalid_return,
+        ResolveError.undefined_variable,
+        ResolveError.unused_variable,
+        ResolveError.variable_already_declared,
         => blk: {
-            logger.err(.default, @src(), "Handling 'static token error'.{s}:[err: '{}' for token '{s}' ].", //
-                .{ logger.newline, err, token });
+            // logger.err(.default, @src(), "Handling 'static token error'.{s}:[err: '{any}' for token '{s}' ].", //
+            //     .{ logger.newline, err, token });
 
             break :blk main.tokenError(token, fmt);
         },
         inline else => |other| blk: {
-            logger.err(.default, @src(), "Handling errors other than 'static token error'.{s}:[err: '{any}' for token '{s}' ].", //
-                .{ logger.newline, other, token });
+            // logger.err(.default, @src(), "Handling errors other than 'static token error'.{s}:[err: '{any}' for token '{s}' ].", //
+            //     .{ logger.newline, other, token });
             break :blk other;
         },
     };
@@ -147,12 +151,12 @@ fn endScope(self: *Resolver) void {
     const scoper: logger.Scoper = .{ .scope = .{ .name = @src().fn_name, .parent = &loggerscoper_beginScope.scope } };
     const scope: BlockScope = self.scopes.pop(); // note: pop invalidates element pointers to the removed element
 
-    logger.info(
-        scoper,
-        @src(),
-        "Finally popped scope!{s}[Metadata: {any}]{s}[Scopes count: {any}]",
-        .{ logger.newline, scope.unmanaged.metadata, logger.newline, scope.unmanaged.count() },
-    );
+    logger.info(scoper, @src(),
+        \\Finally popped scope!{s}[Metadata: {any}]{s}[Scopes count: {any}]
+    , .{
+        logger.newline, scope.unmanaged.metadata,
+        logger.newline, scope.unmanaged.count(),
+    });
 
     var it = scope.iterator();
     while (it.next()) |entry| {
@@ -186,8 +190,8 @@ fn declare(self: *Resolver, name: Token) Allocator.Error!void {
     }
 
     if (self.scopes.items[self.scopesSize() - 1].contains(name.lexeme)) {
-        logger.err(scoper, @src(), "Already a variable with this name in this scope.{s}[name: {any} ]{s}[peeked scope item count: {d}]", //
-            .{ logger.newline, name, logger.newline, self.scopes.items[self.scopesSize() - 1].count() });
+        // logger.err(scoper, @src(), "Already a variable with this name in this scope.{s}[name: {any} ]{s}[peeked scope item count: {d}]", //
+        //     .{ logger.newline, name, logger.newline, self.scopes.items[self.scopesSize() - 1].count() });
         try handleTokenError(Error.variable_already_declared, name, "Already a variable with this name in this scope.");
     }
 
@@ -204,7 +208,11 @@ fn declare(self: *Resolver, name: Token) Allocator.Error!void {
 
 fn define(self: *Resolver, name: Token) Error!void {
     if (self.isEmptyScopeStack()) {
-        return logger.info(.default, @src(), "Found empty stack.{s}[name: {any}]", .{ logger.newline, name });
+        logger.info(.default, @src(),
+            \\Found empty stack.{s}[name: {any}]
+        , .{ logger.newline, name });
+
+        return;
     }
 
     const is_resolved = true; //> is fully initialized and ready for use
@@ -223,9 +231,9 @@ fn resolveLocal(self: *Resolver, expr: *Expr, name: Token) Error!void {
     // see https://craftinginterpreters.com/resolving-and-binding.html#resolving-variable-expressions
     var i: i32 = scope_index;
     while (i >= 0) : (i -= 1) {
-        logger.info(scoper, @src(),
-            \\Resolving local variable.{s}name: '{any}' at scope index '{d}'..
-        , .{ logger.newline, name, i });
+        logger.info(.default, @src(),
+            \\Resolving local variable.{s}name: '{s}' at scope index '{d}'..
+        , .{ logger.newline, name.lexeme, i });
 
         if (self.scopes.items[@intCast(i)].contains(name.lexeme)) {
             assert((scope_index >= i) and (scope_index - i >= 0));
@@ -268,8 +276,8 @@ pub fn resolveStatements(self: *Resolver, statements: []const Stmt) Allocator.Er
     for (statements) |*stmt| {
         resolveStatement(self, stmt) catch |err| {
             const token_ptr = root.unionPayloadPtr(Token, stmt) orelse unreachable;
-            logger.err(.default, @src(), "Found payload ptr.{s}[stmt: {any}, token: {any}]", //
-                .{ logger.newline, stmt, token_ptr });
+            // logger.err(.default, @src(), "Found payload ptr.{s}[stmt: {any}, token: {any}]", //
+            //     .{ logger.newline, stmt, token_ptr });
 
             return try handleTokenError(err, token_ptr.*, "Failed to resolve statement.");
         };
@@ -287,6 +295,24 @@ pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
         },
         .break_stmt => |_| {
             @panic("Unimplemented");
+        },
+        .class => |class| {
+            // logger.debug(scoper, @src(), "{}", .{class});
+            try self.declare(class.name);
+            try self.define(class.name);
+
+            // FIXME: See https://craftinginterpreters.com/classes.html#methods-on-classes
+            //
+            // See test.lox
+            // Undefined property 'serve_on'.
+
+            // Storing the function type in a local variable is pointless right
+            // now, but we’ll expand this code before too long and it will make
+            // more sense.
+            for (class.methods) |*method| {
+                const declaration: FunctionType = .method;
+                try self.resolveFunction(method, declaration);
+            }
         },
         .expr_stmt => |expr_stmt| {
             try self.resolveExpr(expr_stmt);
@@ -310,12 +336,17 @@ pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
             try self.resolveExpr(print_stmt);
         },
         .return_stmt => |return_stmt| {
+            // _ = return_stmt; // autofix
+            // if (true) {
+            //     @panic("Unimplemented");
+            // }
             if (self.current_function == .none) {
                 return handleTokenError(
                     Error.invalid_return,
                     return_stmt.keyword,
                     "Can't return from top level code.",
                 );
+                // return main.tokenError(return_stmt.keyword, "");
             }
             if (return_stmt.value) |expr| {
                 try self.resolveExpr(expr);
@@ -356,6 +387,9 @@ pub fn resolveExpr(self: *Resolver, expr: *Expr) Error!void {
                 try self.resolveExpr(arg_expr);
             }
         },
+        .get => |get| {
+            try self.resolveExpr(get.object);
+        },
         .grouping => |grouping| {
             try self.resolveExpr(grouping);
         },
@@ -367,6 +401,14 @@ pub fn resolveExpr(self: *Resolver, expr: *Expr) Error!void {
             // Static analysis does no control flow or short-circuiting.
             try self.resolveExpr(logical.left);
             try self.resolveExpr(logical.right);
+        },
+        .set => |set| {
+            try self.resolveExpr(set.value); // value being set to
+            try self.resolveExpr(set.object); // object whouse property is being set
+            logger.warn(loggerscoper_beginScope, @src(),
+                \\Resolving set expression.
+                \\{s}Set: '{s}'."
+            , .{ logger.indent, set.name.lexeme });
         },
         .unary => |unary| {
             try self.resolveExpr(unary.right);
@@ -384,8 +426,10 @@ pub fn resolveExpr(self: *Resolver, expr: *Expr) Error!void {
                     }
                 }
             }
-            logger.info(loggerscoper_beginScope, @src(), "Resolving variable initializer expression.{s}[variable: '{any}'].", //
-                .{ logger.newline, variable });
+            logger.info(loggerscoper_beginScope, @src(),
+                \\Resolving variable initializer expression.
+                \\{s}variable: '{s}'."
+            , .{ logger.indent, variable.lexeme });
             try self.resolveLocal(expr, variable);
         },
     }

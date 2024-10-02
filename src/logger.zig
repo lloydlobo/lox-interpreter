@@ -3,6 +3,8 @@ const assert = std.debug.assert;
 const testing = std.testing;
 const SourceLocation = std.builtin.SourceLocation;
 
+const root = @import("root.zig");
+
 const logger = @This();
 
 comptime {
@@ -22,8 +24,8 @@ pub const color_white = "\x1b[37m";
 pub const color_red = "\x1b[31m";
 
 const glyph_color = color_white;
-
-pub const newline = "\n" ++ color_reset ++ "\t" ++ glyph_color ++ "└─ " ++ color_reset;
+pub const indent = color_reset ++ "\t" ++ glyph_color ++ "└─ " ++ color_reset;
+pub const newline: []const u8 = "\n" ++ indent;
 
 pub const LogLevel = enum {
     debug,
@@ -96,6 +98,57 @@ test "Scoper" {
     );
 }
 
+fn countPlaceholders(comptime format: []const u8) usize {
+    comptime {
+        var count: usize = 0;
+        var i: usize = 0;
+        while (i < format.len) : (i += 1) {
+            if (format[i] == '{') {
+                if (i + 1 < format.len and format[i + 1] == '{') {
+                    i += 1; // Skip escaped '{'
+                } else {
+                    count += 1;
+                }
+            }
+        }
+
+        return count;
+    }
+}
+
+// STUB
+// This depends on Zig compiler for the "referenced by: ` error logs to find `@src()`.
+fn checkFormatArgs(comptime format: []const u8, comptime ArgsType: type) void {
+    comptime {
+        const expected_args = countPlaceholders(format);
+        const provided_args = @typeInfo(ArgsType).Struct.fields.len;
+        if (expected_args != provided_args) {
+            @compileError(std.fmt.comptimePrint(
+                "Argument count mismatch. Expected {d} arguments, but got {d}.\nFormat string: \"{s}\"",
+                .{ expected_args, provided_args, format },
+            ));
+        }
+    }
+}
+
+fn checkFormatArgsSrc(
+    comptime format: []const u8,
+    comptime ArgsType: type,
+    comptime src: std.builtin.SourceLocation,
+) void {
+    comptime {
+        const expected_args = countPlaceholders(format);
+        const provided_args = @typeInfo(ArgsType).Struct.fields.len;
+        if (expected_args != provided_args) {
+            @compileError(std.fmt.comptimePrint(
+                \\Error at {s}:{d}:{d} in function '{s}':
+                \\Argument count mismatch. Expected {d} arguments, but got {d}.
+                \\Format string: "{s}"
+            , .{ src.file, src.line, src.column, src.fn_name, expected_args, provided_args, format }));
+        }
+    }
+}
+
 pub fn log(
     comptime level: LogLevel,
     scoper: Scoper,
@@ -103,58 +156,53 @@ pub fn log(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    // if debugging then comment me.
-    {
-        const is_skip_logging = (level == LogLevel.info);
-        if (comptime is_skip_logging) {
+    comptime {
+        checkFormatArgsSrc(format, @TypeOf(args), src);
+    }
+
+    const is_skip_info = true;
+    if (comptime is_skip_info) {
+        const is_any_level_to_skip = (level == .info); // or level == .debug
+        if (is_any_level_to_skip) {
             return;
         }
     }
-    const stderr = std.io.getStdErr().writer();
 
     // Strip the "src/" prefix from the source file path if it exists
-    const stripped_file = if (std.mem.startsWith(u8, src.file, "src/"))
-        src.file[4..]
-    else
-        src.file;
+    const is_starts_with_src = std.mem.startsWith(u8, src.file, "src/");
+    const stripped_file: []const u8 = if (is_starts_with_src) src.file[4..] else src.file;
 
     // Buffer to capture the fully formatted scope (including parent scopes)
-    var scope_buffer: [256]u8 = undefined;
+    var scope_buffer: [256]u8 = undefined; // note: resize as required
     var scope_stream = std.io.fixedBufferStream(&scope_buffer);
     const scope_writer = scope_stream.writer();
 
-    const scope: Scope = scoper.toScope();
     // Format the scope into the buffer
-    scope.format("", .{}, scope_writer) catch unreachable;
+    const scope: Scope = scoper.toScope();
+    scope.format("", .{}, scope_writer) catch |e| {
+        root.exit(.exit_failure, "Failed to format scope '{any}'", .{e});
+    };
+    const formatted_scope: []u8 = scope_buffer[0 .. scope_writer.context.getPos() catch |e| {
+        root.exit(.exit_failure, "{any}", .{e});
+    }];
 
     // Write the full log message
-    stderr.print(
-        v_pad ++
-            h_pad ++
+    root.stderr().writer().print(
+        v_pad ++ h_pad ++
             "{s}{s}{s}{s}{s}: {s}:{s}{s}:{d}{s}:{d}:{s} {s}{s}:{s}{s} " ++
             format ++
-            color_reset ++
-            "\n" ++
-            v_pad,
+            color_reset ++ "\n" ++ v_pad,
         .{
-            glyph_color,
-            color_white,
-            scope_buffer[0 .. scope_writer.context.getPos() catch unreachable],
-            glyph_color,
-            color_reset,
-            stripped_file,
-            color_white,
-            src.fn_name,
-            src.line,
-            color_white,
-            src.column,
-            color_bold,
-            level.getColor(),
-            level.getName(),
-            color_reset,
+            glyph_color,      color_white,     formatted_scope,
+            glyph_color,      color_reset,     stripped_file,
+            color_white,      src.fn_name,     src.line,
+            color_white,      src.column,      color_bold,
+            level.getColor(), level.getName(), color_reset,
             color_bold,
         } ++ args,
-    ) catch unreachable;
+    ) catch |e| {
+        root.exit(.exit_failure, "Failed to print to stderr '{any}'", .{e});
+    };
 }
 
 pub fn debug(scoper: Scoper, comptime src: SourceLocation, comptime format: []const u8, args: anytype) void {
@@ -174,6 +222,11 @@ pub fn err(scoper: Scoper, comptime src: SourceLocation, comptime format: []cons
 }
 
 test "basic usage" {
+    const skip_test = true;
+    if (comptime skip_test) {
+        return;
+    }
+
     const root_scope: logger.Scoper = .{ .scope = .{
         .name = "app",
         .parent = null,
@@ -192,4 +245,9 @@ test "basic usage" {
     logger.info(network_scope, @src(), "Connected to server", .{});
     logger.warn(db_scope, @src(), "Slow query detected: {d}ms", .{150});
     logger.err(network_scope, @src(), "Connection lost: {s}", .{"Timeout"});
+
+    logger.warn(.default, @src(),
+        \\Resolving variable initializer expression.
+        \\{s}variable: '{s}'."
+    , .{ logger.indent, "bar_test" });
 }

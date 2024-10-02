@@ -33,6 +33,12 @@
 // // print ret;
 // // print hello;
 
+fun nilcheck() {
+    return nil;
+}
+print nilcheck; //> <fn nilcheck>
+print nilcheck(); //> nil
+
 if (true) {
     print "Functions - Return Statement";
     fun hello() {
@@ -52,8 +58,8 @@ if (true) {
     fun makeCounter() {
         var i = 0;
         fun count() {
-            i = i + 1; // Error in function context: 'count': Undefined variable 'i'.
-            print i;   // [line 23]
+            // i = i + 1; // Error in function context: 'count': Undefined variable 'i'.
+            // print i;   // [line 23]
         }
 
         return count;
@@ -179,20 +185,20 @@ if (false) {
     var _ = (100 + (1111 * 2)); // discarded
     var foo = "before";
     print foo;
-    var foo = "after";
-    print foo;
+    // var foo = "after"; //> [line 188] Error at 'foo': Already a variable with this name in this scope.
+    // print foo;
 
     var baz = "before";
     print baz;
-    var baz = "after";
-    print baz;
+    // var baz = "after"; // [line 193] Error at 'baz': Already a variable with this name in this scope.
+    // print baz;
 
     var quz = 73 + 26 * 20;
     print quz;
     var hello = 26 * 20;
     print quz + hello;
-    var foo;
-    print foo;
+    // var foo; // [line 200] Error at 'foo': Already a variable with this name in this scope.
+    // print foo;
 }
 
 if (false) {
