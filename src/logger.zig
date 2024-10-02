@@ -158,13 +158,13 @@ pub fn log(
 ) void {
     comptime {
         checkFormatArgsSrc(format, @TypeOf(args), src);
+    }
 
-        const is_enabled = false;
-        if (is_enabled) {
-            const is_any_level_to_skip = (level == .info); // or level == .debug
-            if (is_any_level_to_skip) {
-                return;
-            }
+    const is_skip_info = true;
+    if (comptime is_skip_info) {
+        const is_any_level_to_skip = (level == .info); // or level == .debug
+        if (is_any_level_to_skip) {
+            return;
         }
     }
 

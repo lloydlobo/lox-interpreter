@@ -18,6 +18,7 @@ pub const Expr = union(enum) {
     grouping: *Expr,
     literal: Value,
     logical: Logical,
+    set: Set,
     unary: Unary,
     variable: Token,
 
@@ -49,14 +50,20 @@ pub const Expr = union(enum) {
     };
 
     pub const Get = struct {
+        object: *Expr,
         name: Token,
-        value: *Expr,
     };
 
     pub const Logical = struct {
         left: *Expr,
         operator: Token,
         right: *Expr,
+    };
+
+    pub const Set = struct {
+        object: *Expr,
+        name: Token,
+        value: *Expr,
     };
 
     pub const Unary = struct {
@@ -149,7 +156,7 @@ test "Expr ─ basic usage" {
 // }
 
 //
-// assign         →
+// assignment     → ( call "." )? IDENTIFIER "=" assignment | logic_or ;
 // binary         → expression operator expression ;
 // call           → primary ( "(" arguments? ")" | "." IDENTIFIER )* ;
 // grouping       → "(" expression ")" ;
@@ -166,6 +173,7 @@ test "Expr ─ basic usage" {
 // "Get           : Expr object, Token name",
 // "Literal       : Object value",
 // "Logical       : Expr left, Token operator, Expr right",,
+// "Set           : Expr object, Token name, Expr value",
 // "Unary         : Token operator, Expr right",
 
 // "Block         : List<Stmt> statements",
@@ -200,3 +208,8 @@ test "Expr ─ basic usage" {
 
 // Value.from()
 // See https://gitlab.com/andreyorst/lox/-/blob/main/src/zig/lox/value.zig?ref_type=heads#L253
+
+// Expr.Set
+// Unlike getters, setters don’t chain. However, the reference to call allows
+// any high-precedence expression before the last dot, including any number of
+// getters, as in:

@@ -11,6 +11,8 @@ define generate_sources
 	$(wildcard src/*.zig)
 endef # or use `$(shell find src -name '*.zig')`
 
+# the project does not declare a preferred optimization mode. choose: --release=fast, --release=safe, or --release=small
+RELEASE_FLAGS := --release=fast
 TEST_FILE := test.lox
 TRACE_FLAGS := -freference-trace
 VALGRIND := valgrind --leak-check=full --show-leak-kinds=all -s --track-origins=yes
@@ -23,6 +25,16 @@ clean:
 	@date && echo $(UNAME_S)
 	rm -rf zig-out .zig-cache vgcore.*
 	echo $$?
+
+.PHONY: bench
+bench:
+	hyperfine --shell=none --warmup=25 --ignore-failure './zig-out/bin/main run test.lox' './zig-out/bin/main run test.lox'
+
+.PHONY: build
+build: $(ZIG_SRCS)
+	# Debug
+	@zig build --summary all $(TRACE_FLAGS) # $(RELEASE_FLAGS)
+
 
 # 	@$(foreach src,$(call generate_sources), \
 # 		# echo "Running ast-check on $(src)"; \
@@ -73,22 +85,22 @@ test: $(ZIG_SRCS)
 
 tokenize:
 	@make ast-check
-	@zig build --summary all $(TRACE_FLAGS)
+	@make build
 	$(EXE) tokenize test.lox $(TRACE_FLAGS) && echo
 
 parse:
 	@make ast-check
-	@zig build --summary all $(TRACE_FLAGS)
+	@make build
 	$(EXE) parse test.lox $(TRACE_FLAGS) && echo
 
 evaluate:
 	@make ast-check
-	@zig build --summary all $(TRACE_FLAGS)
+	@make build
 	$(EXE) evaluate test.lox $(TRACE_FLAGS) && echo
 
 run:
 	@make ast-check
-	@zig build --summary all $(TRACE_FLAGS)
+	@make build
 	$(EXE) run test.lox $(TRACE_FLAGS) && echo
 
 
@@ -98,7 +110,7 @@ run:
 pre-valgrind:
 	make ast-check
 	@echo "Building project from build.zig"
-	zig build --summary all
+	@make build
 
 valgrind-tokenize:
 	make -j4 pre-valgrind

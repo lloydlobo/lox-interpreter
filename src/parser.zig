@@ -15,6 +15,7 @@ const TypeSets = @import("token.zig").TypeSets;
 const Value = @import("value.zig").Value;
 const debug = @import("debug.zig");
 const root = @import("root.zig");
+const logger = @import("logger.zig");
 const tokenError = @import("main.zig").tokenError;
 
 const Parser = @This();
@@ -209,10 +210,12 @@ fn call(self: *Parser) Error!*Expr {
                 .identifier,
                 "Expect property name after '.'.",
             );
+
             expr = try self.createExpr(.{ .get = .{
                 .name = name,
-                .value = expr,
+                .object = expr,
             } });
+            logger.warn(.default, @src(), "In call(), dot method, name: {any}, expr: {any}", .{ name, expr });
         } else {
             break;
         }
@@ -373,7 +376,7 @@ fn orExpr(self: *Parser) Error!*Expr {
 fn assignment(self: *Parser) Error!*Expr {
     const expr: *Expr = try self.orExpr();
 
-    if (self.match(TypeSets.assignment)) {
+    if (self.match(TypeSets.assignment)) { // → .equal → `=`
         const equals: Token = self.previous();
         const value: *Expr = try self.assignment();
 
@@ -382,6 +385,19 @@ fn assignment(self: *Parser) Error!*Expr {
                 .name = name,
                 .value = value,
             } }),
+            .get => |get| blk: {
+                logger.debug(.default, @src(),
+                    \\Parsing assignment (Expr.Get -> Expr.Set).
+                    \\{s}get: '{}'.
+                    \\{s}expr: '{}'.
+                , .{ logger.indent, get, logger.indent, expr });
+                break :blk try self.createExpr(.{ .set = .{
+                    .object = get.object,
+                    .name = get.name,
+                    .value = value,
+                } });
+            },
+
             else => parseError(equals, "Invalid assignment target."),
         };
     }

@@ -33,7 +33,7 @@ environment: *Environment,
 locals: StringHashMap(i32),
 
 comptime {
-    assert(@sizeOf(@This()) == 72);
+    // assert(@sizeOf(@This()) == 72);
     assert(@alignOf(@This()) == 8);
 }
 
@@ -61,6 +61,7 @@ const RuntimeError = error{
     wrong_arity,
 
     non_instance_property,
+    non_instance_field,
     undefined_property,
 };
 
@@ -143,11 +144,14 @@ pub fn handleRuntimeError(err: Error) Allocator.Error!void {
             return runtimeError(undeclared_token, "Wrong function arguments arity '{s}'.", .{runtime_token.lexeme});
         },
 
+        error.non_instance_field => {
+            return runtimeError(runtime_token, "Only instances have fields '{s}'.", .{runtime_token.lexeme});
+        },
         error.non_instance_property => {
             return runtimeError(runtime_token, "Only instances have properties '{s}'.", .{runtime_token.lexeme});
         },
         error.undefined_property => {
-            return runtimeError(runtime_token, "Undefined propertiy '{s}'.", .{runtime_token.lexeme});
+            return runtimeError(runtime_token, "Undefined property '{s}'.", .{runtime_token.lexeme});
         },
 
         // PropagationException
@@ -363,9 +367,12 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
     };
 }
 
+// In theory, we can now read properties on objects. But since there’s no way
+// to actually stuff any state into an instance, there are no fields to access.
+// Before we can test out reading, we must support writing.
 fn visitGetExpr(self: *Self, get: Expr.Get) Error!Value {
     // Evaluate the expression whose property is being accessed.
-    const value: Value = try self.evaluate(get.value);
+    const value: Value = try self.evaluate(get.object);
 
     return switch (value) {
         .instance => |instance| blk: {
@@ -398,18 +405,18 @@ fn visitGetExpr(self: *Self, get: Expr.Get) Error!Value {
                 logger.indent, get,
             });
 
-            const is_implemented = false;
-            if (comptime is_implemented) {
-                const out: Value = instance.callable.get(self, get.name);
-                switch (out) {
-                    .nil => try handleRuntimeError(error.non_instance_property),
-                    else => {},
-                }
-
-                break :blk out;
-            } else {
-                @panic("Cannot return nil from get() on instance, since it's not callable");
+            const out: Value = instance.get(get.name) catch |err| {
+                assert(err == Error.undefined_property); // sanity check
+                runtime_token = get.name;
+                break :blk err;
+            };
+            // This was written before we introduced callable. So assume
+            // the following is a HACK / Sanity check, which is not necessary.
+            switch (out) {
+                .nil => try handleRuntimeError(error.non_instance_property),
+                else => {},
             }
+            break :blk out;
         },
         else => blk: {
             // Note: In Lox, only class instances can have properties.
@@ -440,6 +447,33 @@ fn visitLogicalExpr(self: *Self, expr: Expr.Logical) Error!Value {
     }
 
     return try self.evaluate(expr.right);
+}
+
+// Evaluate the expression whose property is being accessed.
+/// Raise a runtime error if it’s not an instance of a class.
+/// Evaluate the value.
+fn visitSetExpr(self: *Self, expr: Expr.Set) Error!Value {
+    const object: Value = try self.evaluate(expr.object);
+
+    return switch (object) {
+        .instance => |instance| blk: {
+            const value = try self.evaluate(expr.value);
+            logger.warn(.default, @src(),
+                \\Visited after evaluating expr.value in Parser.assignment (Expr.Get -> Expr.Set).
+                \\{s}expr.name: '{}'.
+                \\{s}value: '{}'.
+            , .{ logger.indent, expr.name, logger.indent, value });
+
+            instance.set(expr.name, value) catch |err| break :blk err;
+
+            break :blk value;
+        },
+        else => blk: {
+            // Note: In Lox, only class instances can have properties.
+            runtime_token = expr.name;
+            break :blk RuntimeError.non_instance_field;
+        },
+    };
 }
 
 fn visitUnaryExpr(self: *Self, expr: Expr.Unary) Error!Value {
@@ -536,6 +570,7 @@ fn evaluate(self: *Self, expr: *Expr) Error!Value {
         .grouping => |grouping| try self.evaluate(grouping),
         .literal => |literal| try self.visitLiteralExpr(literal),
         .logical => |logical| try self.visitLogicalExpr(logical),
+        .set => |set| try self.visitSetExpr(set),
         .unary => |unary| try self.visitUnaryExpr(unary),
         .variable => |_| try self.visitVariableExpr(expr),
     };

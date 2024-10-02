@@ -19,11 +19,12 @@ const root = @import("root.zig");
 const Instance = @This();
 
 /// Callable provides `VTable`.
-callable: Callable,
-class: *Class,
+callable: Callable, // 24
+class: *Class, // 8
+fields: std.StringHashMap(Value), // 40
 
 comptime {
-    assert(@sizeOf(@This()) == 32);
+    // assert(@sizeOf(@This()) == 72);
     assert(@alignOf(@This()) == 8);
 }
 
@@ -40,6 +41,7 @@ pub fn init(
             .vtable = &vtable,
         },
         .class = class,
+        .fields = std.StringHashMap(Value).init(allocator),
     };
 
     return self;
@@ -49,6 +51,22 @@ pub fn init(
 /// have the same address and alignment property.
 pub fn destroy(self: *Instance, allocator: Allocator) void {
     allocator.destroy(self);
+}
+
+/// Throws runtime error and exits if `fields` does not contain `name.lexeme`.
+/// See ast node: `Expr.Get`.
+pub fn get(self: *Instance, name: Token) !Value {
+    return self.fields.get(name.lexeme) orelse Interpreter.Error.undefined_property;
+    // orelse {
+    //     return Interpreter.panicRuntimeError(error.undefined_property, name);
+    // };
+}
+
+pub fn set(self: *Instance, name: Token, value: Value) Instance.Error!void {
+    try self.fields.put(name.lexeme, value);
+    // return self.fields.get(name.lexeme) orelse {
+    //     return Interpreter.panicRuntimeError(error.undefined_property, name);
+    // };
 }
 
 const vtable = Callable.VTable{
@@ -92,7 +110,7 @@ pub fn arity(callable: *const Callable) usize {
 }
 
 test "stats" {
-    try testing.expectEqual(32, @sizeOf(@This()));
+    try testing.expectEqual(72, @sizeOf(@This()));
     try testing.expectEqual(8, @alignOf(@This()));
 }
 
@@ -170,38 +188,6 @@ test "Instance toString" {
 }
 
 test "Instance arity" {
-    // var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    // defer arena.deinit();
-    // const allocator = arena.allocator();
-    //
-    // const env = try Environment.init(allocator);
-    // const declaration = Stmt.Function{
-    //     .name = Token{
-    //         .type = .identifier,
-    //         .lexeme = "testFunc",
-    //         .line = 1,
-    //         .literal = null,
-    //     },
-    //     .parameters = @constCast(&[_]Token{
-    //         Token{
-    //             .type = .identifier,
-    //             .lexeme = "a",
-    //             .line = 1,
-    //             .literal = null,
-    //         },
-    //         Token{
-    //             .type = .identifier,
-    //             .lexeme = "b",
-    //             .line = 1,
-    //             .literal = null,
-    //         },
-    //     }),
-    //     .body = &[_]Stmt{},
-    // };
-    //
-    // const func = try Instance.init(allocator,  declaration);
-    // defer func.destroy(allocator);
-    //
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();

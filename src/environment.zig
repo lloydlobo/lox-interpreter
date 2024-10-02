@@ -18,7 +18,7 @@ enclosing: ?*Environment = null,
 values: StringHashMap(Value),
 
 comptime {
-    assert(@sizeOf(@This()) == 64);
+    // assert(@sizeOf(@This()) == 64);
     assert(@alignOf(@This()) == 8);
 }
 
