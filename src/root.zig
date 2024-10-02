@@ -151,11 +151,11 @@ pub fn eprint(comptime fmt: []const u8, args: anytype) void {
     };
 }
 
-pub fn stdout() std.fs.File {
+pub inline fn stdout() std.fs.File {
     return std.io.getStdOut();
 }
 
-pub fn stderr() std.fs.File {
+pub inline fn stderr() std.fs.File {
     return std.io.getStdErr();
 }
 

@@ -16,7 +16,8 @@ const root = @import("root.zig");
 
 const Function = @This();
 
-callable: Callable, // provides `VTable`
+/// Callable provides `VTable`.
+callable: Callable,
 closure: *Environment,
 declaration: Stmt.Function,
 
@@ -24,6 +25,8 @@ comptime {
     assert(@sizeOf(@This()) == 120);
     assert(@alignOf(@This()) == 8);
 }
+
+pub const Error = Callable.Error;
 
 pub fn init(
     allocator: Allocator,
@@ -50,27 +53,24 @@ pub fn destroy(self: *Function, allocator: Allocator) void {
     allocator.destroy(self);
 }
 
-pub const AllocPrintError = error{OutOfMemory};
-pub const Error = AllocPrintError;
-
 const vtable = Callable.VTable{
     .toString = toString,
     .call = call,
     .arity = arity,
 };
 
-pub fn toString(callable: *const Callable) AllocPrintError![]const u8 {
+pub fn toString(callable: *const Callable) []const u8 {
     const self: *Function = @constCast(@fieldParentPtr("callable", callable));
-    const buffer: []u8 = try std.fmt.allocPrint(
-        callable.allocator,
-        "{s}",
-        .{self.declaration.name.lexeme},
-    );
+
+    const token: Token = self.declaration.name;
+    const buffer = std.fmt.allocPrint(callable.allocator, "<fn {s}>", .{token.lexeme}) catch |err| {
+        Interpreter.panicRuntimeError(err, token);
+    };
 
     return buffer;
 }
 
-pub fn call(callable: *const Callable, interpreter: *Interpreter, arguments: []Value) Callable.Error!Value {
+pub fn call(callable: *const Callable, interpreter: *Interpreter, arguments: []Value) Function.Error!Value {
     const self: *Function = @constCast(@fieldParentPtr("callable", callable));
 
     var environment = Environment.init(callable.allocator) catch |err| {
@@ -136,16 +136,20 @@ test "Function initialization" {
 
     const env = try Environment.init(allocator);
     const declaration = Stmt.Function{
-        .name = Token{ .type = .identifier, .lexeme = "testFunc", .line = 1, .literal = null },
+        .name = Token{
+            .type = .identifier,
+            .lexeme = "test_function",
+            .line = 1,
+            .literal = null,
+        },
         .parameters = &[_]Token{},
         .body = &[_]Stmt{},
     };
 
     const func = try Function.init(allocator, env, declaration);
-    defer func.destroy(allocator);
 
     try testing.expect(func.closure == env);
-    try testing.expectEqualStrings("testFunc", func.declaration.name.lexeme);
+    try testing.expectEqualStrings("test_function", func.declaration.name.lexeme);
 }
 
 test "Function toString" {
@@ -155,18 +159,21 @@ test "Function toString" {
 
     const env = try Environment.init(allocator);
     const declaration = Stmt.Function{
-        .name = Token{ .type = .identifier, .lexeme = "testFunc", .line = 1, .literal = null },
+        .name = Token{
+            .type = .identifier,
+            .lexeme = "test_functon",
+            .line = 1,
+            .literal = null,
+        },
         .parameters = &[_]Token{},
         .body = &[_]Stmt{},
     };
 
     const func = try Function.init(allocator, env, declaration);
-    defer func.destroy(allocator);
 
-    const result = try func.callable.toString();
-    defer allocator.free(result);
+    const result = func.callable.toString();
 
-    try testing.expectEqualStrings("testFunc", result);
+    try testing.expectEqualStrings("<fn test_functon>", result);
 }
 
 test "Function arity" {
@@ -175,17 +182,32 @@ test "Function arity" {
     const allocator = arena.allocator();
 
     const env = try Environment.init(allocator);
-    const declaration = Stmt.Function{
-        .name = Token{ .type = .identifier, .lexeme = "testFunc", .line = 1, .literal = null },
+
+    const function_declaration = Stmt.Function{
+        .name = Token{
+            .type = .identifier,
+            .lexeme = "test_function",
+            .line = 1,
+            .literal = null,
+        },
         .parameters = @constCast(&[_]Token{
-            Token{ .type = .identifier, .lexeme = "a", .line = 1, .literal = null },
-            Token{ .type = .identifier, .lexeme = "b", .line = 1, .literal = null },
+            Token{
+                .type = .identifier,
+                .lexeme = "a",
+                .line = 1,
+                .literal = null,
+            },
+            Token{
+                .type = .identifier,
+                .lexeme = "b",
+                .line = 1,
+                .literal = null,
+            },
         }),
         .body = &[_]Stmt{},
     };
 
-    const func = try Function.init(allocator, env, declaration);
-    defer func.destroy(allocator);
+    const func = try Function.init(allocator, env, function_declaration);
 
     try testing.expectEqual(@as(usize, 2), func.callable.arity());
 }

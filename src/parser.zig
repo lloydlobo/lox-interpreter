@@ -204,7 +204,7 @@ fn call(self: *Parser) Error!*Expr {
     while (true) {
         if (self.match(TypeSets.left_paren)) {
             expr = try self.finishCall(expr);
-        } else if (self.match(TypeSets.dot)) {
+        } else if (self.match(TypeSets.dot)) { // method
             const name: Token = try self.consume(
                 .identifier,
                 "Expect property name after '.'.",
@@ -630,7 +630,9 @@ fn varDeclaration(self: *Parser) Error!Stmt {
 }
 
 fn functionDeclaration(self: *Parser, comptime kind: []const u8) Error!Stmt {
-    assert(self.checkPrevious(.fun));
+    if (mem.eql(u8, kind, Stmt.Function.function_kind)) {
+        assert(self.checkPrevious(.fun));
+    }
 
     const name: Token = try self.consume(.identifier, "Expect " ++ kind ++ " name.");
     _ = try self.consume(.left_paren, "Expect '(' after " ++ kind ++ " name.");
@@ -676,8 +678,9 @@ fn classDeclaration(self: *Parser, comptime kind: []const u8) Error!Stmt {
 
     var methods = std.ArrayList(Stmt.Function).init(self.allocator);
     errdefer methods.deinit();
+
     while (!self.check(.right_brace) and !self.isAtEnd()) {
-        const method: Stmt = try self.functionDeclaration(Stmt.Function.function_kind);
+        const method: Stmt = try self.functionDeclaration(Stmt.Function.method_kind);
         try methods.append(method.function);
     }
 

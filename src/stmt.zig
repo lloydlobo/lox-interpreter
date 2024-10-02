@@ -73,6 +73,7 @@ pub const Stmt = union(enum) {
         }
 
         pub const function_kind = "function";
+        pub const method_kind = "method";
 
         pub fn create(allocator: Allocator) !*Function {
             const self = try allocator.create(Function);

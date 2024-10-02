@@ -6,11 +6,9 @@ const StringHashMap = std.StringHashMap;
 
 const Callable = @import("callable.zig");
 const Class = @import("class.zig");
-const ClassContext = @import("loxclass.zig");
 const Environment = @import("environment.zig");
 const Expr = @import("expr.zig").Expr;
 const Function = @import("function.zig");
-const FunctionContext = @import("loxfunction.zig");
 const ReturnValue = @import("value.zig").Value.Return;
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
@@ -97,11 +95,11 @@ pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
         clock.*.vtable = loxbuiltin.clock_vtable;
 
         assert((noop.vtable.arity(noop) == 0) and
-            mem.eql(u8, "<native fn>", try noop.vtable.toString(noop)) and
+            mem.eql(u8, "<native fn>", noop.vtable.toString(noop)) and
             (try noop.vtable.call(noop, &self, &.{})).nil == Value.Nil.nil);
 
         assert((clock.vtable.arity(clock) == 0) and
-            mem.eql(u8, "<native fn>", try clock.vtable.toString(clock)) and
+            mem.eql(u8, "<native fn>", clock.vtable.toString(clock)) and
             ((try (clock.vtable.call(clock, &self, &.{}))).num > 0.0));
 
         self.globals.define("noop", .{ .callable = noop }) catch |err| try handleRuntimeError(err);
@@ -109,6 +107,17 @@ pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
     }
 
     return self;
+}
+
+pub fn panicRuntimeError(err: Error, token: Token) noreturn {
+    runtime_token = token;
+    runtime_error = err;
+
+    handleRuntimeError(err) catch |e| {
+        root.exit(.exit_failure, "{any}", .{e});
+    };
+
+    root.exit(.exit_failure, "{any}", .{err});
 }
 
 pub fn handleRuntimeError(err: Error) Allocator.Error!void {
@@ -167,26 +176,11 @@ fn printValue(writer: anytype, value: Value) void {
 
         .ret => |ret| std.fmt.format(writer, "{any}", .{ret.toValue()}) catch {},
 
-        .callable => |callable| std.fmt.format(writer, "{s}", .{callable.toString() catch |err| {
-            handleRuntimeError(err) catch |e| root.exit(.runtime_error, "{any}", .{e});
-            root.exit(.runtime_error, "{any}", .{err});
-        }}) catch {},
+        .callable => |callable| std.fmt.format(writer, "{s}", .{callable.toString()}) catch {},
 
-        .function => |function| std.fmt.format(writer, "{s}", .{
-            function.callable.toString() catch |err| {
-                root.exit(.runtime_error, "{any}", .{err});
-            },
-        }) catch {},
-        .class => |class| std.fmt.format(writer, "{s}", .{
-            class.callable.toString() catch |err| {
-                root.exit(.runtime_error, "{any}", .{err});
-            },
-        }) catch {},
-        .instance => |class_instance| std.fmt.format(writer, "{s}", .{
-            class_instance.callable.toString() catch |err| {
-                root.exit(.runtime_error, "{any}", .{err});
-            },
-        }) catch {},
+        .function => |function| std.fmt.format(writer, "{s}", .{function.callable.toString()}) catch {},
+        .class => |class| std.fmt.format(writer, "{s}", .{class.callable.toString()}) catch {},
+        .instance => |class_instance| std.fmt.format(writer, "{s}", .{class_instance.callable.toString()}) catch {},
     }
 }
 
@@ -395,7 +389,15 @@ fn visitGetExpr(self: *Self, get: Expr.Get) Error!Value {
             //   }
             //
 
-            logger.warn(.default, @src(), "DOING: .class {any} for call: {s}", .{ get, try instance.callable.toString() });
+            logger.info(.default, @src(),
+                \\Visiting get expression (DOING)
+                \\{s}Class: '{s}'.
+                \\{s}Instance Method: '{any}'.
+            , .{
+                logger.indent, instance.callable.toString(),
+                logger.indent, get,
+            });
+
             const is_implemented = false;
             if (comptime is_implemented) {
                 const out: Value = instance.callable.get(self, get.name);
@@ -406,7 +408,7 @@ fn visitGetExpr(self: *Self, get: Expr.Get) Error!Value {
 
                 break :blk out;
             } else {
-                break :blk Value.Nil;
+                @panic("Cannot return nil from get() on instance, since it's not callable");
             }
         },
         else => blk: {
@@ -666,24 +668,6 @@ pub fn interpretExpression(self: *Self, expr: *Expr, writer: anytype) Allocator.
     printValue(writer, value);
 }
 
-// const clockGlobalCallable: Value.LoxCallable = .{
-//     .arityFn = struct {
-//         fn arity() usize {
-//             return 0;
-//         }
-//     }.arity,
-//     .callFn = struct {
-//         fn call(_: *Interpreter, _: []Value) Value {
-//             return .{ .num = (@as(f64, @floatFromInt(std.time.milliTimestamp())) / 1000.0) };
-//         }
-//     }.call,
-//     .toStringFn = struct {
-//         fn toString() []const u8 {
-//             return "<native fn>";
-//         }
-//     }.toString,
-// };
-
 pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!void {
     if (comptime debug.is_trace_interpreter) {
         const is_resolver_feature_flag = !main.g_is_stable_pre_resolver_feature_flag;
@@ -693,7 +677,7 @@ pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!vo
         if (self.globals.values.get("clock")) |value| {
             const fun = value.callable;
             assert(@TypeOf(fun) == *Value.CallableValue);
-            assert((fun.arity() == 0) and mem.eql(u8, try fun.toString(), "<native fn>"));
+            assert((fun.arity() == 0) and mem.eql(u8, fun.toString(), "<native fn>"));
             assert(@TypeOf((try fun.call(self, &[_]Value{})).num) == f64);
         }
     }

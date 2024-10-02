@@ -13,7 +13,7 @@ const builtin = @This();
 
 pub const default_vtable: *const Callable.VTable = &.{
     .toString = struct {
-        fn toString(_: *const Callable) Callable.AllocPrintError![]const u8 {
+        fn toString(_: *const Callable) []const u8 {
             return "<native fn>";
         }
     }.toString,
@@ -31,7 +31,7 @@ pub const default_vtable: *const Callable.VTable = &.{
 
 pub const clock_vtable: *const Callable.VTable = &.{
     .toString = struct {
-        fn toString(self: *const Callable) Callable.AllocPrintError![]const u8 {
+        fn toString(self: *const Callable) []const u8 {
             _ = self; // autofix
             return "<native fn>";
         }

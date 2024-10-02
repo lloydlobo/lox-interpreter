@@ -19,22 +19,15 @@ const Class = @This();
 
 callable: Callable, // provides `VTable`
 name: Token,
-// closure: *Environment,
-// declaration: Stmt.Class,
 
 comptime {
-    // assert(@sizeOf(@This()) == 120);
+    assert(@sizeOf(@This()) == 80);
     assert(@alignOf(@This()) == 8);
 }
 
 pub fn init(
     allocator: Allocator,
     name: Token,
-
-    // closure: *Environment,
-    // declaration: Stmt.Class,
-    //      name: Token,
-    //      methods: []Stmt.Function,
 ) Allocator.Error!*Class {
     const self = try allocator.create(Class);
     self.* = .{
@@ -64,16 +57,16 @@ const vtable = Callable.VTable{
     .arity = arity,
 };
 
-pub fn toString(callable: *const Callable) AllocPrintError![]const u8 {
+pub fn toString(callable: *const Callable) []const u8 {
     const self: *Class = @constCast(@fieldParentPtr("callable", callable));
+    const name: []const u8 = self.name.lexeme;
+    // const buffer: []u8 = try std.fmt.allocPrint(
+    //     callable.allocator,
+    //     "{s}", // "<class {s}>",
+    //     .{self.name.lexeme},
+    // );
 
-    const buffer: []u8 = try std.fmt.allocPrint(
-        callable.allocator,
-        "<class {s}>",
-        .{self.name.lexeme},
-    );
-
-    return buffer;
+    return name;
 }
 
 /// Instantiates a new `Instance` for the called class and returns it.
@@ -108,7 +101,7 @@ pub fn arity(callable: *const Callable) usize {
 }
 
 test "stats" {
-    try testing.expectEqual(120, @sizeOf(@This()));
+    try testing.expectEqual(80, @sizeOf(@This()));
     try testing.expectEqual(8, @alignOf(@This()));
 }
 
@@ -117,18 +110,15 @@ test "Class initialization" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const env = try Environment.init(allocator);
-    const declaration = Stmt.Class{
-        .name = Token{ .type = .identifier, .lexeme = "testFunc", .line = 1, .literal = null },
-        .parameters = &[_]Token{},
-        .body = &[_]Stmt{},
+    const class_declaration = Stmt.Class{
+        .name = Token{ .type = .identifier, .lexeme = "TestClass", .line = 1, .literal = null },
+        .methods = &[_]Stmt.Function{},
     };
 
-    const func = try Class.init(allocator, env, declaration);
-    defer func.destroy(allocator);
+    const cls = try Class.init(allocator, class_declaration.name);
 
-    try testing.expect(func.closure == env);
-    try testing.expectEqualStrings("testFunc", func.declaration.name.lexeme);
+    try testing.expectEqual(cls.name, class_declaration.name);
+    try testing.expectEqualStrings("TestClass", cls.name.lexeme);
 }
 
 test "Class toString" {
@@ -136,20 +126,18 @@ test "Class toString" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const env = try Environment.init(allocator);
-    const declaration = Stmt.Class{
-        .name = Token{ .type = .identifier, .lexeme = "testFunc", .line = 1, .literal = null },
-        .parameters = &[_]Token{},
-        .body = &[_]Stmt{},
+    const class_declaration = Stmt.Class{
+        .name = Token{ .type = .identifier, .lexeme = "TestClass", .line = 1, .literal = null },
+        .methods = &[_]Stmt.Function{},
     };
 
-    const func = try Class.init(allocator, env, declaration);
-    defer func.destroy(allocator);
+    // /home/lloyd/p/lang_zig/crafting-interpreters-zig/src/function.zig:163:25: 0x1060e0b in test.Function toString (test)
+    //     defer allocator.free(result);
+    const cls = try Class.init(allocator, class_declaration.name);
 
-    const result = try func.callable.toString();
-    defer allocator.free(result);
+    const result = cls.callable.toString();
 
-    try testing.expectEqualStrings("testFunc", result);
+    try testing.expectEqualStrings("TestClass", result);
 }
 
 test "Class arity" {
@@ -157,18 +145,12 @@ test "Class arity" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const env = try Environment.init(allocator);
-    const declaration = Stmt.Class{
-        .name = Token{ .type = .identifier, .lexeme = "testFunc", .line = 1, .literal = null },
-        .parameters = @constCast(&[_]Token{
-            Token{ .type = .identifier, .lexeme = "a", .line = 1, .literal = null },
-            Token{ .type = .identifier, .lexeme = "b", .line = 1, .literal = null },
-        }),
-        .body = &[_]Stmt{},
+    const class_declaration = Stmt.Class{
+        .name = Token{ .type = .identifier, .lexeme = "TestClass", .line = 1, .literal = null },
+        .methods = &[_]Stmt.Function{},
     };
 
-    const func = try Class.init(allocator, env, declaration);
-    defer func.destroy(allocator);
+    const cls = try Class.init(allocator, class_declaration.name);
 
-    try testing.expectEqual(@as(usize, 2), func.callable.arity());
+    try testing.expectEqual(@as(usize, 0), cls.callable.arity());
 }

@@ -70,19 +70,19 @@ pub const Value = union(enum) {
             .ret => |ret| try std.fmt.format(writer, "{any}", .{ret}),
 
             .callable => |c| try std.fmt.format(writer, "{s}(<arity {d}>)", .{
-                c.*.toString() catch |err| root.exit(.runtime_error, "{any}", .{err}),
+                c.toString(),
                 c.*.arity(),
             }),
             .function => |function| try std.fmt.format(writer, "{s}(<arity {d}>)", .{
-                function.callable.toString() catch |err| root.exit(.runtime_error, "{any}", .{err}),
+                function.callable.toString(),
                 function.callable.arity(),
             }),
             .class => |class| try std.fmt.format(writer, "{s}(<arity {d}>)", .{
-                class.callable.toString() catch |err| root.exit(.runtime_error, "{any}", .{err}),
+                class.callable.toString(),
                 class.callable.arity(),
             }),
             .instance => |instance| try std.fmt.format(writer, "{s}(<arity {d}>)", .{
-                instance.callable.toString() catch |err| root.exit(.runtime_error, "{any}", .{err}),
+                instance.callable.toString(),
                 instance.callable.arity(),
             }),
 

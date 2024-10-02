@@ -24,14 +24,10 @@ comptime {
     assert(@alignOf(@This()) == 8);
 }
 
-pub const default_vtable = loxbuiltin.default_vtable;
-pub const clock_vtable = loxbuiltin.clock_vtable;
-
-pub const AllocPrintError = error{OutOfMemory};
-pub const Error = AllocPrintError || Allocator.Error;
+pub const Error = Allocator.Error;
 
 pub const VTable = struct {
-    toString: *const fn (*const Callable) AllocPrintError![]const u8,
+    toString: *const fn (*const Callable) []const u8,
     call: *const fn (*const Callable, *Interpreter, []Value) Allocator.Error!Value,
     arity: *const fn (*const Callable) usize,
 };
@@ -55,15 +51,15 @@ pub fn destroy(self: *Callable, allocator: Allocator) void {
     allocator.destroy(self);
 }
 
-pub fn toString(self: *const Callable) AllocPrintError![]const u8 {
-    return try self.vtable.toString(self);
+pub fn toString(self: *const Callable) []const u8 {
+    return self.vtable.toString(self);
 }
 
 pub fn call(
     self: *const Callable,
     interpreter: *Interpreter,
     arguments: []Value,
-) Allocator.Error!Value {
+) Callable.Error!Value {
     return try self.vtable.call(self, interpreter, arguments);
 }
 
@@ -77,6 +73,10 @@ test "stats" {
 }
 
 test "Callable ─ native clock function" {
+    const default_vtable = loxbuiltin.default_vtable;
+    _ = default_vtable; // autofix
+    const clock_vtable = loxbuiltin.clock_vtable;
+
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -89,7 +89,7 @@ test "Callable ─ native clock function" {
     var interpreter = try Interpreter.init(allocator);
     const arguments = &[_]Value{};
 
-    try testing.expectEqualStrings("<native fn>", try clock.toString());
+    try testing.expectEqualStrings("<native fn>", clock.toString());
 
     const actual: f64 = (try clock.call(&interpreter, arguments)).num;
     const expected = (@as(f64, @floatFromInt(std.time.milliTimestamp())) / 1000.0);
