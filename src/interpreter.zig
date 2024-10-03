@@ -577,14 +577,13 @@ fn lookupVariableOld(self: *Self, name: Token, expr: *Expr) Error!Value {
 // Visit methods do a **post-order traversal**—each node evaluates its
 // children before doing its own work.
 fn evaluate(self: *Self, expr: *Expr) Error!Value {
-    if (comptime debug.is_trace_interpreter) {
+    if (comptime debug.is_trace_interpreter and debug.is_trace_astprinter) {
         AstPrinter.debugOtherVariants(root.stderr().writer(), expr) catch |err| {
             root.exit(.exit_failure, "Failed to print ast expression '{s}': {any}", .{
                 expr.toString(), err,
             });
         };
     }
-
     return switch (expr.*) {
         .assign => |assign| try self.visitAssignExpr(assign),
         .binary => |binary| try self.visitBinaryExpr(binary),
@@ -738,12 +737,6 @@ pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!vo
             assert(@TypeOf((try fun.call(self, &[_]Value{})).num) == f64);
         }
     }
-    // defer {
-    //     if (self.environment.values.count() != 0) {
-    //         self.environment.values.clearAndFree();
-    //     }
-    //     assert(self.environment.values.count() == 0);
-    // }
 
     for (stmts) |*stmt| {
         _ = self.execute(stmt, writer) catch |err| {

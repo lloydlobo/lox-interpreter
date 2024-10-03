@@ -97,7 +97,9 @@ pub fn toString(callable: *const Callable) []const u8 {
     const self: *Function = @constCast(@fieldParentPtr("callable", callable));
 
     const token: Token = self.declaration.name;
-    const buffer = std.fmt.allocPrint(callable.allocator, "<fn {s}>", .{token.lexeme}) catch |err| {
+    const buffer = std.fmt.allocPrint(callable.allocator, "<fn {s}>", .{
+        token.lexeme,
+    }) catch |err| {
         Interpreter.panicRuntimeError(err, token);
     };
 

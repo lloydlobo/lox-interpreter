@@ -3,29 +3,43 @@ print "file: test.lox";
 
 print "# Class";
 
-print "## Class ─ this/self";
+print "## Class ─ This";
+{
+    class Egotist {
+        fun speak() {
+            print this;
+        }
+    };
+    var egotist = Egotist();
+    var method = Egotist().speak;
+    method(); //> Egotist instance
+}
 
-class Egotist {
-    fun speak() {
-        print this;
-    }
-};
-var egotist = Egotist();
-var method = Egotist().speak;
-method(); //> Egotist instance
+{
+    class Cake {
+        fun taste() {
+            var adjective = "delicious";
+            print "The " + this.flavor + " cake is " + adjective + "!";
+        }
+    };
+    var cake = Cake();
+    cake.flavor = "German chocolate";
+    cake.taste();//> The German chocolate cake is delicious!
+    cake.flavor = "Belgian chocolate";
+    var taste_belgian_cake_method = cake.taste;
+    taste_belgian_cake_method(); //> The Belgian chocolate cake is delicious!
+}
 
-class Cake {
-    fun taste() {
-        var adjective = "delicious";
-        print "The " + this.flavor + " cake is " + adjective + "!";
+{
+    print "## Class ─ This: Invalid uses of this";
+
+    // print this; // Error at 'this': Can't use 'this' outside of a class.
+    fun not_a_method() {
+        // print this; // Error at 'this': Can't use 'this' outside of a class.
     }
-};
-var cake = Cake();
-cake.flavor = "German chocolate";
-cake.taste();//> The German chocolate cake is delicious!
-cake.flavor = "Belgian chocolate";
-var taste_belgian_cake_method = cake.taste;
-taste_belgian_cake_method(); //> The Belgian chocolate cake is delicious!
+    not_a_method(); //> Undefined variable 'this'.
+
+}
 
 // see `:h modeline`
 // vim: set commentstring=//\ %s :
