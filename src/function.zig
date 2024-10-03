@@ -5,6 +5,7 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 
 const Callable = @import("callable.zig");
+const Instance = @import("instance.zig");
 const Environment = @import("environment.zig");
 const Expr = @import("expr.zig").Expr;
 const Interpreter = @import("interpreter.zig");
@@ -59,6 +60,39 @@ pub fn destroy(self: *Function, allocator: Allocator) void {
     allocator.destroy(self);
 }
 
+/// Creates a new environment within the method’s closure, binding "this" to
+/// the instance. This ensures the method retains the bound instance for future
+/// calls. Interpreting "this" expressions works like variable expressions.
+///
+/// See https://craftinginterpreters.com/classes.html#this
+/// See `Interpreter.visitThisExpr` in interpreter.zig.
+pub fn bind(self: *Function, instance: *Instance) Allocator.Error!*Function {
+    const previous_env: *Environment = self.closure;
+    defer self.closure = previous_env;
+
+    var environment: *Environment = try Environment.init(self.callable.allocator);
+    errdefer self.callable.allocator.destroy(environment);
+    environment = self.closure;
+    {
+        // We guarantee that closures in functions or class instance methods
+        // always have an enclosing environment.
+        defer self.closure.enclosing = environment;
+
+        const object: *Value = try self.callable.allocator.create(Value);
+        errdefer self.callable.allocator.destroy(object);
+        object.* = .{ .instance = instance };
+
+        environment.define("this", object.*) catch |err| {
+            Interpreter.runtime_token = self.declaration.name;
+            try Interpreter.handleRuntimeError(err);
+        };
+    }
+
+    // The returned `Function` now carries around its own little persistent
+    // world where “this” is bound to the object.
+    return try Function.init(self.callable.allocator, environment, self.declaration);
+}
+
 pub fn toString(callable: *const Callable) []const u8 {
     const self: *Function = @constCast(@fieldParentPtr("callable", callable));
 
@@ -70,29 +104,33 @@ pub fn toString(callable: *const Callable) []const u8 {
     return buffer;
 }
 
-pub fn call(callable: *const Callable, interpreter: *Interpreter, arguments: []Value) Function.Error!Value {
+/// Caller may set `runtime_token` while catching `Allocator.Error`.
+pub fn call(
+    callable: *const Callable,
+    interpreter: *Interpreter,
+    arguments: []Value,
+) Function.Error!Value {
     const self: *Function = @constCast(@fieldParentPtr("callable", callable));
 
     var environment = Environment.init(callable.allocator) catch |err| {
-        // TODO: Caller should pre-set runtime_token for error
-        // try Interpreter.handleRuntimeError(err);
+        Interpreter.runtime_token = self.declaration.name;
+        try Interpreter.handleRuntimeError(err);
         return err;
     };
     errdefer callable.allocator.destroy(environment);
 
     environment = self.closure;
 
-    const args_count = arguments.len;
     for (self.declaration.parameters, 0..) |param, i| {
-        if (i >= args_count) {
-            @panic("Expected arity to match len of parameters to arguments. Is this a method?");
+        if (i >= arguments.len) {
+            @panic("Expected arity to match len of parameters to arguments except methods");
         }
-        self.closure.define(param.lexeme, arguments[i]) catch |err| {
-            // TODO: Should the `call()` caller pre-set runtime_token for error??
+
+        const key: []const u8 = param.lexeme;
+        const value: Value = arguments[i];
+        self.closure.define(key, value) catch |err| {
             Interpreter.runtime_token = param;
             try Interpreter.handleRuntimeError(err);
-            // NOTE: Cannot return Environment specific errors, unless `Callable.Error` includes them
-            //   return err;
         };
     }
 

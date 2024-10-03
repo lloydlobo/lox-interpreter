@@ -3,133 +3,48 @@ print "file: test.lox";
 
 print "# Class";
 
-class Bagel { };
+print "## Class ─ this/self";
 
-print Bagel; // Prints "Bagel".
-var bagel = Bagel();
-print bagel; // Prints "Bagel instance".
+// class Egotist {
+//     fun speak() {
+//         print this;
+//     }
+//     // fun speak(self) {
+//     //     print self;
+//     // }
+// };
+//
+//
+// var egotist = Egotist();
+// // var method = Egotist().speak;
+// var method = Egotist().speak;
+//
+// method(egotist); //> Egotist instance
 
+class Cake {
+    fun taste() {
+        var adjective = "delicious";
+        print "The " + this.flavor + " cake is " + adjective + "!";
 
-{
-    print "## Class ─ Set Expr";
-
-    var value = 42;
-    print "setting value of bagel.some_property...";
-    print value;
-    bagel.some_property = value;
-    bagel.nil_property = nil;
-
-    print "## Class ─ Get Expr";
-
-    print "getting value of bagel.some_property...";
-    print bagel.some_property;
-    print bagel.nil_property;
-}
-
-
-print "## Class ─ Methods";
-
-{
-    print "### Class ─ Methods: Devonshire_Cream";
-
-    class Devonshire_Cream {
-        serve_on() {
-            return "Scones";
-        }
-    };
-    print Devonshire_Cream; // Prints "Devonshire_Cream".
-
-    var devonshire_cream = Devonshire_Cream();
-    print devonshire_cream; // Prints "Devonshire_Cream instance".
-
-    // FIXME: See https://craftinginterpreters.com/classes.html#methods-on-classes
-    // Undefined property 'serve_on'.
-    print devonshire_cream.serve_on();
-}
-
-{
-    print "### Class ─ Methods: Object";
-
-    class Object { };
-    var object = Object();
-
-    fun add_2_fun(arg) {
-        return arg + 2;
     }
+};
 
-    object.method_add_2 = add_2_fun;
-    print object.method_add_2; //> <fn add_2_fun>
+// FIXME:
+// thread 375128 panic: access of union field 'variable' while field 'this' is active
+//      /home/lloyd/p/lang_zig/crafting-interpreters-zig/src/interpreter.zig:509:47:
+//      0x10d263e in lookupVariable (main)
+//          const distance: i32 = self.locals.get(expr.variable.lexeme) orelse {
+//                                                    ^
+//      /home/lloyd/p/lang_zig/crafting-interpreters-zig/src/interpreter.zig:483:35:
+//      0x10b3417 in visitThisExpr (main)
+//          return try self.lookupVariable(expr.keyword, this);
+var cake = Cake();
+cake.flavor = "German chocolate";
+cake.taste();
 
-    var add_2 = object.method_add_2;
-    print add_2; //> <fn add_2_fun>
-    print add_2(40); //> 42 i.e. `method(argument)`
-}
-
-{
-    print "### Class ─ Methods: method as instances's function";
-
-    class Box {};
-
-    fun not_method(argument) {
-        print "called function with " + argument;
-    }
-
-    var box = Box();
-    box.function = not_method;
-    box.function("argument"); //> called function with argument
-
-    print(box.function); //> <fn not_method>
-    print(nil == box.function("another argument")); //> true
-
-    // breakfast(omlette.filled_with(cheese), sausage);
-    //
-    //   turn it into this:
-    //
-    // var eggs = omlette.filled_with(cheese);
-    // breakfast(eggs, sausage);
-
-    // fun callback(a, b, c) {
-    //     object.method(a, b, c);
-    // }
-    // take_callback(callback);
-    //
-    //   turn it into this:
-    //
-    // take_callback(object.method);
-
-    class Person {
-        // say_name() {
-        //     print this.name;
-        // }
-
-        say_name(self) {
-            print self.name;
-        }
-    };
-
-    var jane = Person();
-    jane.name = "Jane";
-
-    var bill = Person();
-    bill.name = "Bill";
-
-    print jane.name; //> Jane
-    print bill.name; //> Bill
-
-    // Still confused?
-    bill.say_name = jane.say_name;
-    bill.say_name(bill); //> Bill
-    bill.name = jane.name;
-    bill.say_name(bill); //> Jane
-
-    class Bacon {
-        eat() {
-            print "Crunch crunch crunch!";
-        }
-    };
-    Bacon().eat(); //> Crunch crunch crunch!
-}
-
+// method(egotist); //> Egotist instance
+// egotist.speak(egotist); //> Egotist instance
+// egotist.speak(); //> Egotist instance
 
 // see `:h modeline`
 // vim: set commentstring=//\ %s :

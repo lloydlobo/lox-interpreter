@@ -173,22 +173,33 @@ fn primary(self: *Parser) Error!*Expr {
     if (self.match(TypeSets.false)) {
         return try self.createExpr(.{ .literal = Value.False });
     }
+
     if (self.match(TypeSets.true)) {
         return try self.createExpr(.{ .literal = Value.True });
     }
+
     if (self.match(TypeSets.nil)) {
         return try self.createExpr(.{ .literal = Value.Nil });
     }
+
     if (self.match(TypeSets.number_string)) {
         return try self.createExpr(.{ .literal = self.previousValue() });
     }
-    if (self.match(TypeSets.left_paren)) { //`(` grouping precedence - recursion: primary() |> expression()
+
+    if (self.match(TypeSets.left_paren)) {
+        //`(` grouping precedence - recursion: primary() |> expression()
         const expr = try self.expression();
         _ = try self.consume(.right_paren, "Expect ')' after expression."); //`)`
-
         return try self.createExpr(.{ .grouping = expr });
     }
-    if (self.match(TypeSets.identifier)) { // variable precedence: from declaration() |> primary()
+
+    if (self.match(TypeSets.this)) {
+        // variable precedence: from declaration() |> primary()
+        return try self.createExpr(.{ .this = .{ .keyword = self.previous() } });
+    }
+
+    if (self.match(TypeSets.identifier)) {
+        // variable precedence: from declaration() |> primary()
         return try self.createExpr(.{ .variable = self.previous() });
     }
 
@@ -696,8 +707,12 @@ fn classDeclaration(self: *Parser, comptime kind: []const u8) Error!Stmt {
     errdefer methods.deinit();
 
     while (!self.check(.right_brace) and !self.isAtEnd()) {
-        const method: Stmt = try self.functionDeclaration(Stmt.Function.method_kind);
-        try methods.append(method.function);
+        if (self.match(TypeSets.fun)) {
+            const method: Stmt = try self.functionDeclaration(Stmt.Function.method_kind);
+            try methods.append(method.function);
+        } else {
+            return parseError(self.peek(), "Expect 'fun' identifier to be prefixed on method.");
+        }
     }
 
     _ = try self.consume(.right_brace, "Expect '}}' after " ++ kind ++ " body.");

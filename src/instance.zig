@@ -77,13 +77,24 @@ pub fn get(self: *Instance, name: Token) !Value {
         return value;
     }
 
-    if (self.class.find_method(name.lexeme)) |*method| {
-        const fun = try self.callable.allocator.create(Function);
-        fun.* = method.*;
-        errdefer fun.destroy(self.callable.allocator);
+    const is_prev_stable_impl = false;
+    if (is_prev_stable_impl) {
+        if (self.class.find_method(name.lexeme)) |*method| {
+            const fun = try self.callable.allocator.create(Function);
+            fun.* = method.*;
+            errdefer fun.destroy(self.callable.allocator);
 
-        const value: Value = .{ .function = fun };
-        return value;
+            const value: Value = .{ .function = fun };
+            return value;
+        }
+    } else {
+        // NOTE: the resolver has a new __scope__ for `this`, so the interpreter
+        // needs to create a corresponding environment for it. (resolver's
+        // scope chains and interpreter's link environment must always be in
+        // sync with each other).
+        if (self.class.find_method(name.lexeme)) |*method| {
+            return .{ .function = try @constCast(method).bind(self) };
+        }
     }
 
     return Interpreter.Error.undefined_property;

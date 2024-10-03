@@ -33,6 +33,8 @@ pub const Error = error{variable_not_declared} || Allocator.Error;
 
 const Self = @This();
 
+/// Returns a pointer to undefined memory.
+/// Call `destroy` with the result to free the memory.
 pub fn init(allocator: Allocator) Allocator.Error!*Environment {
     const self = try allocator.create(Environment);
     self.* = .{

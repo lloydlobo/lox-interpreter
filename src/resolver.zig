@@ -301,18 +301,18 @@ pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
             try self.declare(class.name);
             try self.define(class.name);
 
-            // FIXME: See https://craftinginterpreters.com/classes.html#methods-on-classes
-            //
-            // See test.lox
-            // Undefined property 'serve_on'.
+            try self.beginScope();
+            {
+                try self.scopes.items[self.scopesSize() - 1].put("this", true);
 
-            // Storing the function type in a local variable is pointless right
-            // now, but we’ll expand this code before too long and it will make
-            // more sense.
-            for (class.methods) |*method| {
-                const declaration: FunctionType = .method;
-                try self.resolveFunction(method, declaration);
+                // Storing the function type in a local variable is pointless right
+                // now, but we’ll expand this code before too long and it will make more sense.
+                for (class.methods) |*method| {
+                    const declaration: FunctionType = .method;
+                    try self.resolveFunction(method, declaration);
+                }
             }
+            self.endScope();
         },
         .expr_stmt => |expr_stmt| {
             try self.resolveExpr(expr_stmt);
@@ -409,6 +409,9 @@ pub fn resolveExpr(self: *Resolver, expr: *Expr) Error!void {
                 \\Resolving set expression.
                 \\{s}Set: '{s}'."
             , .{ logger.indent, set.name.lexeme });
+        },
+        .this => |this| {
+            try self.resolveLocal(expr, this.keyword);
         },
         .unary => |unary| {
             try self.resolveExpr(unary.right);

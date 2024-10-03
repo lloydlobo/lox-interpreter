@@ -19,6 +19,7 @@ pub const Expr = union(enum) {
     literal: Value,
     logical: Logical,
     set: Set,
+    this: This,
     unary: Unary,
     variable: Token,
 
@@ -64,6 +65,10 @@ pub const Expr = union(enum) {
         object: *Expr,
         name: Token,
         value: *Expr,
+    };
+
+    pub const This = struct {
+        keyword: Token,
     };
 
     pub const Unary = struct {
@@ -174,6 +179,7 @@ test "Expr ─ basic usage" {
 // "Literal       : Object value",
 // "Logical       : Expr left, Token operator, Expr right",,
 // "Set           : Expr object, Token name, Expr value",
+// "This          : Token keyword",
 // "Unary         : Token operator, Expr right",
 
 // "Block         : List<Stmt> statements",

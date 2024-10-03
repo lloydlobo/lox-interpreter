@@ -156,6 +156,7 @@ pub const TypeSets = struct {
     pub const @"return" = &TypeSet.initOne(.@"return");
     pub const semicolon = &TypeSet.initOne(.semicolon);
     pub const @"true" = &TypeSet.initOne(.true);
+    pub const this = &TypeSet.initOne(.this);
     pub const @"var" = &TypeSet.initOne(.@"var");
     pub const @"while" = &TypeSet.initOne(.@"while");
 

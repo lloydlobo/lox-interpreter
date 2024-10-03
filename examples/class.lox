@@ -1,60 +1,101 @@
-print "file: class.lox";
+print "file: test.lox";
+
 
 print "# Class";
 
-class Bagel {};
-
-print Bagel; // Prints "Bagel".
+class Bagel { };
+print Bagel; //> Bagel
 var bagel = Bagel();
+print bagel; //> Bagel instance
 
-print bagel; // Prints "Bagel instance".
 
-{
-    print "## Class ─ Set Expr";
-    var value = 42;
-    print "setting value of bagel.some_property...";
-    print value;
-    bagel.some_property = value;
-    bagel.nil_property = nil;
+print "## Class ─ Set Expr";
 
-    print "## Class ─ Get Expr";
-    print "getting value of bagel.some_property...";
-    print bagel.some_property;
-    print bagel.nil_property;
-}
+var value = 42;
+print "setting value of bagel.some_property...";
+print value;
+bagel.some_property = value;
+bagel.nil_property = nil;
+
+
+print "## Class ─ Get Expr";
+
+print "getting value of bagel.some_property...";
+print bagel.some_property;
+print bagel.nil_property;
 
 
 print "## Class ─ Methods";
 
-{
-    print "### Class ─ Methods: Devonshire_Cream";
-    class Devonshire_Cream {
-        serve_on() {
-            return "Scones";
-        }
-    };
-    print Devonshire_Cream; // Prints "Devonshire_Cream".
 
-    var devonshire_cream = Devonshire_Cream();
-    print devonshire_cream; // Prints "Devonshire_Cream instance".
-}
-
-{
-    print "### Class ─ Methods: Object";
-    class Object {};
-    var object = Object();
-
-    fun add_2_fun(arg) {
-        return arg + 2;
+print "### Class ─ Methods: Devonshire_Cream";
+class Devonshire_Cream {
+    serve_on() {
+        return "Scones";
     }
+};
 
-    object.method_add_2 = add_2_fun;
-    print object.method_add_2; //> <fn add_2_fun>
+print Devonshire_Cream; //> Devonshire_Cream
+var devonshire_cream = Devonshire_Cream();
+print devonshire_cream; //> Devonshire_Cream instance
+print devonshire_cream.serve_on(); //> Scones
 
-    var add_2 = object.method_add_2;
-    print add_2; //> <fn add_2_fun>
-    print add_2(40); //> 42 i.e. `method(argument)`
+
+print "### Class ─ Methods: Object";
+
+class Object { };
+var object = Object();
+
+fun add_2_fun(arg) {
+    return arg + 2;
 }
+
+object.method_add_2 = add_2_fun;
+print object.method_add_2; //> <fn add_2_fun>
+
+var add_2 = object.method_add_2;
+print add_2; //> <fn add_2_fun>
+print add_2(40); //> 42 i.e. `method(argument)`
+
+
+print "### Class ─ Methods: method as instances's function";
+
+class Box {};
+fun not_method(argument) {
+    print "called function with " + argument;
+}
+var box = Box();
+box.function = not_method;
+box.function("argument"); //> called function with argument
+print(box.function); //> <fn not_method>
+print(nil == box.function("another argument")); //> true
+
+
+class Person {
+    say_name(self) {
+        print self.name;
+    }
+};
+
+var jane = Person();
+jane.name = "Jane";
+var bill = Person();
+bill.name = "Bill";
+print jane.name; //> Jane
+print bill.name; //> Bill
+// Still confused?
+bill.say_name = jane.say_name;
+bill.say_name(bill); //> Bill
+bill.name = jane.name;
+bill.say_name(bill); //> Jane
+
+
+class Bacon {
+    eat() {
+        print "Crunch crunch crunch!";
+    }
+};
+Bacon().eat(); //> Crunch crunch crunch!
 
 
 // see `:h modeline`
