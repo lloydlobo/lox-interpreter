@@ -93,7 +93,8 @@ pub fn get(self: *Instance, name: Token) !Value {
         // scope chains and interpreter's link environment must always be in
         // sync with each other).
         if (self.class.find_method(name.lexeme)) |*method| {
-            return .{ .function = try @constCast(method).bind(self) };
+            const function: *Function = @constCast(method);
+            return .{ .function = try function.bind(self) };
         }
     }
 

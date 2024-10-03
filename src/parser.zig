@@ -6,7 +6,6 @@ const assert = std.debug.assert;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 
-const AstPrinter = @import("astprinter.zig").AstPrinter;
 const Expr = @import("expr.zig").Expr;
 const Scanner = @import("scanner.zig").Scanner;
 const Stmt = @import("stmt.zig").Stmt;
@@ -217,16 +216,20 @@ fn call(self: *Parser) Error!*Expr {
         if (self.match(TypeSets.left_paren)) {
             expr = try self.finishCall(expr);
         } else if (self.match(TypeSets.dot)) { // method
-            const name: Token = try self.consume(
-                .identifier,
-                "Expect property name after '.'.",
-            );
-
+            const name: Token = try self.consume(.identifier, "Expect property name after '.'.");
             expr = try self.createExpr(.{ .get = .{
                 .name = name,
                 .object = expr,
             } });
-            logger.warn(.default, @src(), "In call(), dot method, name: {any}, expr: {any}", .{ name, expr });
+
+            logger.info(.default, @src(),
+                \\Chaining call for class instance method.
+                \\{s}{}
+                \\{s}{}
+            , .{
+                logger.indent, name,
+                logger.indent, expr,
+            });
         } else {
             break;
         }

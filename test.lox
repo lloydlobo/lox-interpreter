@@ -5,48 +5,29 @@ print "# Class";
 
 print "## Class ─ this/self";
 
-// class Egotist {
-//     fun speak() {
-//         print this;
-//     }
-//     // fun speak(self) {
-//     //     print self;
-//     // }
-// };
-//
-//
-// var egotist = Egotist();
-// // var method = Egotist().speak;
-// var method = Egotist().speak;
-//
-// method(egotist); //> Egotist instance
+class Egotist {
+    fun speak() {
+        print this;
+    }
+};
+var egotist = Egotist();
+var method = Egotist().speak;
+method(); //> Egotist instance
 
 class Cake {
     fun taste() {
         var adjective = "delicious";
         print "The " + this.flavor + " cake is " + adjective + "!";
-
     }
 };
-
-// FIXME:
-// thread 375128 panic: access of union field 'variable' while field 'this' is active
-//      /home/lloyd/p/lang_zig/crafting-interpreters-zig/src/interpreter.zig:509:47:
-//      0x10d263e in lookupVariable (main)
-//          const distance: i32 = self.locals.get(expr.variable.lexeme) orelse {
-//                                                    ^
-//      /home/lloyd/p/lang_zig/crafting-interpreters-zig/src/interpreter.zig:483:35:
-//      0x10b3417 in visitThisExpr (main)
-//          return try self.lookupVariable(expr.keyword, this);
 var cake = Cake();
 cake.flavor = "German chocolate";
-cake.taste();
-
-// method(egotist); //> Egotist instance
-// egotist.speak(egotist); //> Egotist instance
-// egotist.speak(); //> Egotist instance
+cake.taste();//> The German chocolate cake is delicious!
+cake.flavor = "Belgian chocolate";
+var taste_belgian_cake_method = cake.taste;
+taste_belgian_cake_method(); //> The Belgian chocolate cake is delicious!
 
 // see `:h modeline`
 // vim: set commentstring=//\ %s :
-// vim: set filetype=c :
+// vim: set filetype=cpp :
 // vim: set sts=4 sw=4 et :

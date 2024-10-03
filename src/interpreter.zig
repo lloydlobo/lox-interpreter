@@ -4,6 +4,7 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 const StringHashMap = std.StringHashMap;
 
+const AstPrinter = @import("astprinter.zig");
 const Callable = @import("callable.zig");
 const Class = @import("class.zig");
 const Environment = @import("environment.zig");
@@ -330,8 +331,6 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
             break :blk callable.call(self, try arguments.toOwnedSlice());
         },
         .function => |function| blk: {
-            std.log.err("arity!!!", .{});
-
             if (function.callable.arity() != args_count) {
                 runtime_token = call.paren; // FIXME: options?
                 runtime_token = switch (call.callee.*) {
@@ -504,60 +503,37 @@ fn visitVariableExpr(self: *Self, expr: *Expr) Error!Value {
 }
 
 fn lookupVariable(self: *Self, name: Token, expr: *Expr) Error!Value {
-    _ = name; // autofix
-
-    // FIXME:
-    // thread 375128 panic: access of union field 'variable' while field 'this' is active
+    // FIXME: While solving the above, got following error:
+    //       interpreter.zig:lookupVariable:527:27: warn: Looking up variable 'THIS this null'.
     //
-    // FIXME: While solving above, got:
+    //   thread 382539 panic: reached unreachable code
+    //      environment = environment.enclosing orelse unreachable;
+    //                                                 ^
+    //      src/environment.zig:99:29: 0x10ead01 in getAt (main)
+    //      return try self.ancestor(distance).get(name);
+    // FIXED: Assume this is due to creating binding environment (via function
+    //        closure), but not initEnclosing it to any:
     //
-    //
-    //      error: arity!!!
-    //          default: interpreter.zig:lookupVariable:527:27: warn: Looking
-    //          up variable 'THIS this null'.
-    //      thread 382539 panic: reached unreachable code
-    //         environment = environment.enclosing orelse unreachable;
-    //                                                    ^
-    //         /home/lloyd/p/lang_zig/crafting-interpreters-zig/src/environment.zig:99:29:
-    //         0x10ead01 in getAt (main)
-    //         return try self.ancestor(distance).get(name);
-    //                                 ^
-    //      Assume this is due to creating binding environment (via function
-    //      closure), but not initEnclosing it to any.
+    //      defer self.closure.enclosing = environment;
+    logger.info(.default, @src(), "Looking up variable '{}'.", .{name});
 
-    const token: Token = switch (expr.*) {
-        .this => |this| this.keyword,
-        .variable => |variable| variable,
-        else => unreachable,
-    };
-
-    logger.warn(.default, @src(), "Looking up variable '{}'.", .{token});
-
-    // const distance: i32 = self.locals.get(expr.variable.lexeme) orelse {
-    const distance: i32 = self.locals.get(token.lexeme) orelse {
-        // return self.globals.get(expr.variable) catch |err_1| switch (err_1) {
-        return self.globals.get(token) catch |err_1| switch (err_1) {
-            error.variable_not_declared => self.environment.get(
-                expr.variable,
-            ) catch |err_2| switch (err_2) {
+    const distance: i32 = self.locals.get(name.lexeme) orelse {
+        return self.globals.get(name) catch |err| switch (err) {
+            error.variable_not_declared => self.environment.get(expr.variable) catch |e| switch (e) {
                 error.variable_not_declared => {
-                    // undeclared_token = expr.variable;
-                    undeclared_token = token;
-                    return err_2;
+                    undeclared_token = name;
+                    return e; // bail with error
                 },
                 else => |other| other,
             },
-
             else => |other| other,
         };
     };
 
-    // return self.environment.getAt(distance, expr.variable) catch |err| switch (err) {
-    return self.environment.getAt(distance, token) catch |err| switch (err) {
-        error.variable_not_declared => {
-            // undeclared_token = expr.variable;
-            undeclared_token = token;
-            return err;
+    return self.environment.getAt(distance, name) catch |err| switch (err) {
+        error.variable_not_declared => blk: {
+            undeclared_token = name;
+            break :blk err;
         },
         else => |other| other,
     };
@@ -601,6 +577,14 @@ fn lookupVariableOld(self: *Self, name: Token, expr: *Expr) Error!Value {
 // Visit methods do a **post-order traversal**—each node evaluates its
 // children before doing its own work.
 fn evaluate(self: *Self, expr: *Expr) Error!Value {
+    if (comptime debug.is_trace_interpreter) {
+        AstPrinter.debugOtherVariants(root.stderr().writer(), expr) catch |err| {
+            root.exit(.exit_failure, "Failed to print ast expression '{s}': {any}", .{
+                expr.toString(), err,
+            });
+        };
+    }
+
     return switch (expr.*) {
         .assign => |assign| try self.visitAssignExpr(assign),
         .binary => |binary| try self.visitBinaryExpr(binary),
