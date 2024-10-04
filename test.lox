@@ -1,44 +1,60 @@
 print "file: test.lox";
 
-
 print "# Class";
 
-print "## Class ─ This";
-{
-    class Egotist {
-        fun speak() {
+{ print "## Class ─ This";
+    {
+        class Egotist {
+            fun speak() {
+                print this;
+            }
+        };
+
+        var egotist = Egotist();
+        var method = Egotist().speak;
+        method(); //> Egotist instance
+    }
+
+    {
+        class Cake {
+            fun taste() {
+                var adjective = "delicious";
+                print "The " + this.flavor + " cake is " + adjective + "!";
+            }
+        };
+
+        var cake = Cake();
+        cake.flavor = "German chocolate";
+        cake.taste();//> The German chocolate cake is delicious!
+
+        cake.flavor = "Belgian chocolate";
+        var taste_belgian_cake_method = cake.taste;
+        taste_belgian_cake_method(); //> The Belgian chocolate cake is delicious!
+    }
+}
+
+{ print "## Class ─ This: Invalid uses of this";
+    // Error at 'this': Can't use 'this' outside of a class.
+    // print this;
+
+    fun not_a_method() {
+        // Error at 'this': Can't use 'this' outside of a class.
+        // print this;
+    }
+
+    not_a_method(); //> Undefined variable 'this'.
+}
+
+{ print "## Class ─ Constructors & Initializer";
+
+    class Foo {
+        fun init() {
             print this;
         }
     };
-    var egotist = Egotist();
-    var method = Egotist().speak;
-    method(); //> Egotist instance
-}
 
-{
-    class Cake {
-        fun taste() {
-            var adjective = "delicious";
-            print "The " + this.flavor + " cake is " + adjective + "!";
-        }
-    };
-    var cake = Cake();
-    cake.flavor = "German chocolate";
-    cake.taste();//> The German chocolate cake is delicious!
-    cake.flavor = "Belgian chocolate";
-    var taste_belgian_cake_method = cake.taste;
-    taste_belgian_cake_method(); //> The Belgian chocolate cake is delicious!
-}
-
-{
-    print "## Class ─ This: Invalid uses of this";
-
-    // print this; // Error at 'this': Can't use 'this' outside of a class.
-    fun not_a_method() {
-        // print this; // Error at 'this': Can't use 'this' outside of a class.
-    }
-    not_a_method(); //> Undefined variable 'this'.
-
+    var foo = Foo(); //> Foo instance
+    print foo; //> Foo instance
 }
 
 // see `:h modeline`
