@@ -21,9 +21,10 @@ const Function = @This();
 callable: Callable,
 closure: *Environment,
 declaration: Stmt.Function,
+// is_initializer: bool,
 
 comptime {
-    assert(@sizeOf(@This()) == 120);
+    // assert(@sizeOf(@This()) == 120);
     assert(@alignOf(@This()) == 8);
 }
 
@@ -37,10 +38,12 @@ const vtable = Callable.VTable{
 
 pub fn init(
     allocator: Allocator,
-    closure: *Environment,
     declaration: Stmt.Function,
+    closure: *Environment,
+    // is_initializer: bool,
 ) Allocator.Error!*Function {
     const self = try allocator.create(Function);
+    // const is_initializer = false; // TODO: enable parameter
     self.* = .{
         .callable = .{
             .allocator = allocator,
@@ -48,6 +51,7 @@ pub fn init(
         },
         .closure = closure,
         .declaration = declaration,
+        // .is_initializer = is_initializer,
     };
 
     return self;
@@ -90,7 +94,7 @@ pub fn bind(self: *Function, instance: *Instance) Allocator.Error!*Function {
 
     // The returned `Function` now carries around its own little persistent
     // world where “this” is bound to the object.
-    return try Function.init(self.callable.allocator, environment, self.declaration);
+    return try Function.init(self.callable.allocator, self.declaration, environment);
 }
 
 pub fn toString(callable: *const Callable) []const u8 {
@@ -158,6 +162,8 @@ pub fn call(
             return Value.Nil;
         },
     };
+
+    // if () {}
 
     return Value.Nil;
 }

@@ -110,8 +110,8 @@ pub fn call(
         const init_method: *Function = try initializer.bind(instance);
         _ = try init_method.callable.call(interpreter, arguments);
     }
-
     const out: Value = .{ .instance = instance };
+
     return out;
 }
 

@@ -659,7 +659,7 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
 
             for (class.methods) |method| {
                 assert(@TypeOf(method) == Stmt.Function);
-                const function: *Function = try Function.init(self.allocator, self.environment, method);
+                const function: *Function = try Function.init(self.allocator, method, self.environment);
                 assert(@TypeOf(function) != @TypeOf(method));
                 try methods.put(method.name.lexeme, function.*);
             }
@@ -687,7 +687,7 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
                 \\{s}Creating callable function '{s}'.
                 \\{s}Capturing function in current environment.
             , .{ logger.indent, function.name.lexeme, logger.indent });
-            const fun: *Function = try Function.init(self.allocator, self.environment, function);
+            const fun: *Function = try Function.init(self.allocator, function, self.environment);
             try self.environment.define(function.name.lexeme, .{ .function = fun });
         },
         .print_stmt => |expr| {
