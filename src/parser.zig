@@ -6,7 +6,6 @@ const assert = std.debug.assert;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 
-const AstPrinter = @import("astprinter.zig").AstPrinter;
 const Expr = @import("expr.zig").Expr;
 const Scanner = @import("scanner.zig").Scanner;
 const Stmt = @import("stmt.zig").Stmt;
@@ -173,22 +172,33 @@ fn primary(self: *Parser) Error!*Expr {
     if (self.match(TypeSets.false)) {
         return try self.createExpr(.{ .literal = Value.False });
     }
+
     if (self.match(TypeSets.true)) {
         return try self.createExpr(.{ .literal = Value.True });
     }
+
     if (self.match(TypeSets.nil)) {
         return try self.createExpr(.{ .literal = Value.Nil });
     }
+
     if (self.match(TypeSets.number_string)) {
         return try self.createExpr(.{ .literal = self.previousValue() });
     }
-    if (self.match(TypeSets.left_paren)) { //`(` grouping precedence - recursion: primary() |> expression()
+
+    if (self.match(TypeSets.left_paren)) {
+        //`(` grouping precedence - recursion: primary() |> expression()
         const expr = try self.expression();
         _ = try self.consume(.right_paren, "Expect ')' after expression."); //`)`
-
         return try self.createExpr(.{ .grouping = expr });
     }
-    if (self.match(TypeSets.identifier)) { // variable precedence: from declaration() |> primary()
+
+    if (self.match(TypeSets.this)) {
+        // variable precedence: from declaration() |> primary()
+        return try self.createExpr(.{ .this = .{ .keyword = self.previous() } });
+    }
+
+    if (self.match(TypeSets.identifier)) {
+        // variable precedence: from declaration() |> primary()
         return try self.createExpr(.{ .variable = self.previous() });
     }
 
@@ -206,16 +216,20 @@ fn call(self: *Parser) Error!*Expr {
         if (self.match(TypeSets.left_paren)) {
             expr = try self.finishCall(expr);
         } else if (self.match(TypeSets.dot)) { // method
-            const name: Token = try self.consume(
-                .identifier,
-                "Expect property name after '.'.",
-            );
-
+            const name: Token = try self.consume(.identifier, "Expect property name after '.'.");
             expr = try self.createExpr(.{ .get = .{
                 .name = name,
                 .object = expr,
             } });
-            logger.warn(.default, @src(), "In call(), dot method, name: {any}, expr: {any}", .{ name, expr });
+
+            logger.info(.default, @src(),
+                \\Chaining call for class instance method.
+                \\{s}{}
+                \\{s}{}
+            , .{
+                logger.indent, name,
+                logger.indent, expr,
+            });
         } else {
             break;
         }
@@ -696,8 +710,12 @@ fn classDeclaration(self: *Parser, comptime kind: []const u8) Error!Stmt {
     errdefer methods.deinit();
 
     while (!self.check(.right_brace) and !self.isAtEnd()) {
-        const method: Stmt = try self.functionDeclaration(Stmt.Function.method_kind);
-        try methods.append(method.function);
+        if (self.match(TypeSets.fun)) {
+            const method: Stmt = try self.functionDeclaration(Stmt.Function.method_kind);
+            try methods.append(method.function);
+        } else {
+            return parseError(self.peek(), "Expect 'fun' identifier to be prefixed on method.");
+        }
     }
 
     _ = try self.consume(.right_brace, "Expect '}}' after " ++ kind ++ " body.");

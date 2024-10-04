@@ -1,137 +1,164 @@
 print "file: test.lox";
 
-
 print "# Class";
 
-class Bagel { };
+{ print "## Class ─ This";
+    {
+        class Egotist {
+            fun speak() {
+                print this;
+            }
+        };
 
-print Bagel; // Prints "Bagel".
-var bagel = Bagel();
-print bagel; // Prints "Bagel instance".
-
-
-{
-    print "## Class ─ Set Expr";
-
-    var value = 42;
-    print "setting value of bagel.some_property...";
-    print value;
-    bagel.some_property = value;
-    bagel.nil_property = nil;
-
-    print "## Class ─ Get Expr";
-
-    print "getting value of bagel.some_property...";
-    print bagel.some_property;
-    print bagel.nil_property;
-}
-
-
-print "## Class ─ Methods";
-
-{
-    print "### Class ─ Methods: Devonshire_Cream";
-
-    class Devonshire_Cream {
-        serve_on() {
-            return "Scones";
-        }
-    };
-    print Devonshire_Cream; // Prints "Devonshire_Cream".
-
-    var devonshire_cream = Devonshire_Cream();
-    print devonshire_cream; // Prints "Devonshire_Cream instance".
-
-    // FIXME: See https://craftinginterpreters.com/classes.html#methods-on-classes
-    // Undefined property 'serve_on'.
-    print devonshire_cream.serve_on();
-}
-
-{
-    print "### Class ─ Methods: Object";
-
-    class Object { };
-    var object = Object();
-
-    fun add_2_fun(arg) {
-        return arg + 2;
+        var egotist = Egotist();
+        var method = Egotist().speak;
+        method(); //> Egotist instance
     }
 
-    object.method_add_2 = add_2_fun;
-    print object.method_add_2; //> <fn add_2_fun>
+    {
+        class Cake {
+            fun taste() {
+                var adjective = "delicious";
+                if (this.flavor == "Belgian chocolate") {
+                    adjective = "yummy";
+                }
+                print "The " + this.flavor + " cake is " + adjective + "!";
 
-    var add_2 = object.method_add_2;
-    print add_2; //> <fn add_2_fun>
-    print add_2(40); //> 42 i.e. `method(argument)`
-}
+                this.tasted_counter = this.tasted_counter + 1;
+                if (this.tasted_counter >= 2) {
+                    print "But now I am full.";
+                }
+            }
+        };
 
-{
-    print "### Class ─ Methods: method as instances's function";
+        var cake = Cake();
+        cake.flavor = "German chocolate";
+        cake.tasted_counter = 0;
 
-    class Box {};
+        cake.taste();//> The German chocolate cake is delicious!
+        print cake.tasted_counter; //> 1
 
-    fun not_method(argument) {
-        print "called function with " + argument;
+        cake.flavor = "Belgian chocolate";
+        {
+            var taste_cake_method = cake.taste;
+
+            taste_cake_method(); //> The Belgian chocolate cake is delicious!\nBut now I am full.
+            print cake.tasted_counter; //> 2
+            print taste_cake_method; //> <fn taste>
+        }
+
     }
 
-    var box = Box();
-    box.function = not_method;
-    box.function("argument"); //> called function with argument
+    { print "### Class ─ This: Invalid uses of this";
+        // Error at 'this': Can't use 'this' outside of a class.
+        // print this;
 
-    print(box.function); //> <fn not_method>
-    print(nil == box.function("another argument")); //> true
-
-    // breakfast(omlette.filled_with(cheese), sausage);
-    //
-    //   turn it into this:
-    //
-    // var eggs = omlette.filled_with(cheese);
-    // breakfast(eggs, sausage);
-
-    // fun callback(a, b, c) {
-    //     object.method(a, b, c);
-    // }
-    // take_callback(callback);
-    //
-    //   turn it into this:
-    //
-    // take_callback(object.method);
-
-    class Person {
-        // say_name() {
-        //     print this.name;
-        // }
-
-        say_name(self) {
-            print self.name;
+        fun not_a_method() {
+            // Error at 'this': Can't use 'this' outside of a class.
+            // print this;
         }
-    };
 
-    var jane = Person();
-    jane.name = "Jane";
-
-    var bill = Person();
-    bill.name = "Bill";
-
-    print jane.name; //> Jane
-    print bill.name; //> Bill
-
-    // Still confused?
-    bill.say_name = jane.say_name;
-    bill.say_name(bill); //> Bill
-    bill.name = jane.name;
-    bill.say_name(bill); //> Jane
-
-    class Bacon {
-        eat() {
-            print "Crunch crunch crunch!";
-        }
-    };
-    Bacon().eat(); //> Crunch crunch crunch!
+        not_a_method(); //> Undefined variable 'this'.
+    }
 }
+
+
+{ print "## Class ─ Constructors & Initializer";
+
+    class Foo {
+        fun init() {
+            print this;
+            // return nil;
+        }
+    };
+
+    var foo = Foo(); //> Foo instance
+
+    { print "### Class ─ Constructors & Initializer: Invoking init() directly";
+        { // Without `return` in `init()`.
+            print foo.init(); //> Foo instance
+        }
+
+        { // With `return` in `init()`.
+            class Bar {
+                fun init() {
+                    print this;
+                    // Can't return from an initializer
+                    // return 42;
+                }
+            };
+
+            var bar = Bar(); //> Bar instance
+            print bar.init(); //> Bar instance
+
+            fun init() {
+                // Error at 'this': Can't use 'this' outside of a class.
+                // print this;
+                print 4;
+                return 2;
+            }
+
+            print init(); //> 4\n2
+        } 
+    }
+
+}
+
+print "Skipping block that has errors due to 'invoking init() directly'.";
+if (true) {
+    var is_enabled_block = true;
+
+    // FIXME:
+    //
+    // NO ERROR REPORTED WHEN UNDEFINED VARIABLE IN A BLOCK SCOPE
+    class Foo { };
+    var foo = Foo();
+
+    // ok
+    is_enabled_block = false;
+    if (is_enabled_block) {
+        print is_reported_at_runtime;
+    }
+
+    // TODO: That is actually kind of useful sometimes, so we don’t want to
+    // disallow it entirely. Instead, it should return this instead of nil.
+    // That’s an easy fix over in LoxFunction.
+    //
+    // FIXME: FIXED
+    // Skipping block that has errors due to 'invoking init() directly'.
+    //     interpreter.execute:669:39: warn: method: IDENTIFIER init null,
+    //      is_initializer in .class: true.
+    // thread 7990 panic: access of union field 'ret' while field 'nil' is active
+    // interpreter.zig:714:64: 0x107a69a in execute__anon_6626 (main)
+    //             runtime_return_value = ReturnValue.fromValue(value).ret;
+    //                                                                ^
+    // interpreter.zig:623:37: 0x10ba945 in executeBlock__anon_10207 (main)
+    //                 _ = try self.execute(statement, writer);
+    class EmptyBar {
+        fun init() {
+            return;
+        }
+    };
+    var empty_bar = EmptyBar();
+    print empty_bar; //> EmptyBar instance
+    print empty_bar.init(); //> nil
+
+    // !ok
+    is_enabled_block = false;
+    print "is_enabled_block:";
+    print is_enabled_block;
+    // MAKE SURE WE DO NOT SKIP RESOLVER CHECKS IF THERE IS INIT. 
+    // I GUESS, due to binding this, we are skipping the current
+    // closure/environment just after init totally?
+    if (is_enabled_block) {
+        print is_not_reported_at_runtime;
+    }
+}
+
+
 
 
 // see `:h modeline`
 // vim: set commentstring=//\ %s :
-// vim: set filetype=c :
+// vim: set filetype=cpp :
 // vim: set sts=4 sw=4 et :

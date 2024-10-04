@@ -11,10 +11,10 @@ const Token = @This();
 lexeme: []const u8,
 // Initial line number is 1.
 line: u32,
-/// `42` in "var foo = 42;"
-literal: ?Literal,
 /// The `Token` `Type`.
 type: Type,
+/// `42` in "var foo = 42;"
+literal: ?Literal = null,
 
 comptime {
     assert(@sizeOf(@This()) == 56);
@@ -30,13 +30,15 @@ pub fn format(self: Token, comptime _: []const u8, _: std.fmt.FormatOptions, wri
     });
 }
 
-pub fn make(lexeme: []const u8, line: u32, literal: ?Literal, @"type": Type) Token {
-    return .{
-        .lexeme = lexeme,
-        .line = line,
-        .literal = literal,
-        .type = @"type",
-    };
+pub inline fn make(comptime lexeme: []const u8, comptime line: u32, comptime @"type": Type, comptime literal: ?Literal) Token {
+    comptime {
+        return .{
+            .lexeme = lexeme,
+            .line = line,
+            .type = @"type",
+            .literal = literal,
+        };
+    }
 }
 
 pub const Type = enum {
@@ -156,6 +158,7 @@ pub const TypeSets = struct {
     pub const @"return" = &TypeSet.initOne(.@"return");
     pub const semicolon = &TypeSet.initOne(.semicolon);
     pub const @"true" = &TypeSet.initOne(.true);
+    pub const this = &TypeSet.initOne(.this);
     pub const @"var" = &TypeSet.initOne(.@"var");
     pub const @"while" = &TypeSet.initOne(.@"while");
 

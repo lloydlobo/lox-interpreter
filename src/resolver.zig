@@ -34,16 +34,27 @@ allocator: Allocator,
 interpreter: *Interpreter,
 scopes: ScopeStack,
 current_function: FunctionType = FunctionType.none,
+current_class: ClassType = ClassType.none,
 
 comptime {
     assert(@sizeOf(@This()) == 72);
     assert(@alignOf(@This()) == 8);
 }
 
-const loggerscoper_beginScope: logger.Scoper = .{ .scope = .{
-    .name = "beginScope",
-    .parent = null,
-} };
+const ResolveError = error{
+    this_outside_class,
+    invalid_return,
+    invalid_initializer_return,
+    undefined_variable,
+    unused_variable,
+    variable_already_declared,
+};
+
+pub const Error = ResolveError || Allocator.Error;
+
+const beginScopeScoper: logger.Scoper = .{
+    .scope = .{ .name = "beginScope", .parent = null },
+};
 
 const FunctionType = enum {
     none,
@@ -51,7 +62,7 @@ const FunctionType = enum {
     initializer,
     method,
 
-    pub fn isFn(self: FunctionType) bool {
+    pub fn isFun(self: FunctionType) bool {
         return switch (self) {
             .function, .method => true,
             inline else => false,
@@ -63,34 +74,29 @@ const ClassType = enum {
     none,
     class,
     subclass,
+
+    pub fn isClass(self: ClassType) bool {
+        return switch (self) {
+            .class, .subclass => true,
+            inline else => false,
+        };
+    }
 };
 
-const ResolveError = error{
-    invalid_return,
-    undefined_variable,
-    unused_variable,
-    variable_already_declared,
-};
-
-pub const Error = ResolveError || Allocator.Error;
-
-pub fn handleTokenError(err: Error, token: Token, comptime fmt: []const u8) Allocator.Error!void {
+pub fn handleTokenError(
+    err: Error,
+    token: Token,
+    comptime fmt: []const u8,
+) Allocator.Error!void {
     return switch (err) {
         ResolveError.invalid_return,
+        ResolveError.invalid_initializer_return,
         ResolveError.undefined_variable,
         ResolveError.unused_variable,
         ResolveError.variable_already_declared,
-        => blk: {
-            // logger.err(.default, @src(), "Handling 'static token error'.{s}:[err: '{any}' for token '{s}' ].", //
-            //     .{ logger.newline, err, token });
-
-            break :blk main.tokenError(token, fmt);
-        },
-        inline else => |other| blk: {
-            // logger.err(.default, @src(), "Handling errors other than 'static token error'.{s}:[err: '{any}' for token '{s}' ].", //
-            //     .{ logger.newline, other, token });
-            break :blk other;
-        },
+        ResolveError.this_outside_class,
+        => main.tokenError(token, fmt),
+        inline else => |other| other,
     };
 }
 
@@ -102,9 +108,7 @@ pub fn init(allocator: Allocator, interpreter: *Interpreter) Resolver {
     };
 }
 
-pub fn deinit(self: *Resolver) void {
-    _ = self;
-
+pub fn deinit(_: *Resolver) void {
     std.log.warn("Tried to deinit unimplemented Resolver.deinit()", .{});
 }
 
@@ -140,7 +144,7 @@ fn beginScope(self: *Resolver) Allocator.Error!void {
 
     const scope = BlockScope.init(self.allocator);
     if (comptime debug.is_trace_resolver) {
-        logger.info(.{ .scope = loggerscoper_beginScope.scope }, @src(),
+        logger.info(.{ .scope = beginScopeScoper.scope }, @src(),
             \\Pushing scope.{s}[prev_size: {d}]
         , .{ logger.newline, prev_size });
     }
@@ -148,7 +152,7 @@ fn beginScope(self: *Resolver) Allocator.Error!void {
 }
 
 fn endScope(self: *Resolver) void {
-    const scoper: logger.Scoper = .{ .scope = .{ .name = @src().fn_name, .parent = &loggerscoper_beginScope.scope } };
+    const scoper: logger.Scoper = .{ .scope = .{ .name = @src().fn_name, .parent = &beginScopeScoper.scope } };
     const scope: BlockScope = self.scopes.pop(); // note: pop invalidates element pointers to the removed element
 
     logger.info(scoper, @src(),
@@ -178,14 +182,58 @@ fn endScope(self: *Resolver) void {
     }
 }
 
+//
+// declare()
+//
+//
+//
+//
+//
+// FIXME: NO ERROR REPORTED WHEN UNDEFINED VARIABLE IN A BLOCK SCOPE THAT FOLLOWS A CLASS.
+//
+// I suspect it is because of initEnclosing used for call "this"
+//
+//     class Foo { };
+//     var foo = Foo();
+//
+//     // {
+//     //     print is_reported;
+//     // }
+//
+//     class Bar {
+//         fun init() {
+//             //
+//         }
+//
+//     };
+//
+//     var bar = Bar();
+//     bar.init();
+//
+//     {
+//         print is_not_reported;
+//     }
+//
+//
+//
+// Declaration adds the variable to the innermost scope so that it shadows any
+// outer one and so that we know the variable exists. We mark it as “not ready
+// yet” by binding its name to false in the scope map. The value associated
+// with a key in the scope map represents whether or not we have finished
+// resolving that variable’s initializer.
+//
+// When we declare a variable in a local scope, we already know the names
+// of every variable previously declared in that same scope. If we see a
+// collision, we report an error.
+//
 fn declare(self: *Resolver, name: Token) Allocator.Error!void {
     const scoper: logger.Scoper = .{ .scope = .{
         .name = @src().fn_name,
-        .parent = if (self.current_function.isFn()) &loggerscoper_beginScope.scope else null,
+        .parent = if (self.current_function.isFun()) &beginScopeScoper.scope else null,
     } };
 
     if (self.isEmptyScopeStack()) { // FIXME: How should we declare a function variable name if it is global. since, we return immediately?
-        assert(!self.current_function.isFn());
+        assert(!self.current_function.isFun());
         return;
     }
 
@@ -221,12 +269,12 @@ fn define(self: *Resolver, name: Token) Error!void {
 
 fn resolveLocal(self: *Resolver, expr: *Expr, name: Token) Error!void {
     if (self.isEmptyScopeStack()) return; // expect local to be in global scope
-    if (self.current_function.isFn()) assert(self.scopesSize() >= 1); // expect function to be scoped
+    if (self.current_function.isFun()) assert(self.scopesSize() >= 1); // expect function to be scoped
 
     const scope_index = @as(i32, @intCast(self.scopesSize())) - 1;
     assert(scope_index >= 0); // expect beginScope() to be called before resolveLocal
 
-    const scoper = logger.Scoper.makeScope(@src()).withParent(&loggerscoper_beginScope.scope);
+    const scoper = logger.Scoper.makeScope(@src()).withParent(&beginScopeScoper.scope);
 
     // see https://craftinginterpreters.com/resolving-and-binding.html#resolving-variable-expressions
     var i: i32 = scope_index;
@@ -276,10 +324,14 @@ pub fn resolveStatements(self: *Resolver, statements: []const Stmt) Allocator.Er
     for (statements) |*stmt| {
         resolveStatement(self, stmt) catch |err| {
             const token_ptr = root.unionPayloadPtr(Token, stmt) orelse unreachable;
-            // logger.err(.default, @src(), "Found payload ptr.{s}[stmt: {any}, token: {any}]", //
-            //     .{ logger.newline, stmt, token_ptr });
+            logger.err(.default, @src(),
+                \\Found payload ptr.{s}[stmt: {any}, token: {any}]
+            , .{ logger.newline, stmt, token_ptr });
 
-            return try handleTokenError(err, token_ptr.*, "Failed to resolve statement.");
+            //
+            // NOTE: earlier we used to handle error and return ASAP.
+            //
+            try handleTokenError(err, token_ptr.*, "Failed to resolve statement.");
         };
     }
 }
@@ -297,22 +349,31 @@ pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
             @panic("Unimplemented");
         },
         .class => |class| {
-            // logger.debug(scoper, @src(), "{}", .{class});
+            const enclosing_class: ClassType = self.current_class; // currently inside a class
+            self.current_class = .class;
+            defer self.current_class = enclosing_class; // pop stack when methods are resolved
+
+            logger.debug(scoper, @src(), "{}", .{class});
             try self.declare(class.name);
             try self.define(class.name);
 
-            // FIXME: See https://craftinginterpreters.com/classes.html#methods-on-classes
-            //
-            // See test.lox
-            // Undefined property 'serve_on'.
+            try self.beginScope();
+            {
+                // Storing the function type in a local variable is pointless
+                // right now, but we’ll expand this code before too long and it
+                // will make more sense.
+                try self.scopes.items[self.scopesSize() - 1].put("this", true);
 
-            // Storing the function type in a local variable is pointless right
-            // now, but we’ll expand this code before too long and it will make
-            // more sense.
-            for (class.methods) |*method| {
-                const declaration: FunctionType = .method;
-                try self.resolveFunction(method, declaration);
+                for (class.methods) |*method| {
+                    var declaration: FunctionType = .method;
+                    if (mem.eql(u8, method.name.lexeme, "init")) {
+                        declaration = .initializer;
+                    } // See: https://craftinginterpreters.com/classes.html#returning-from-init
+
+                    try self.resolveFunction(method, declaration);
+                }
             }
+            self.endScope();
         },
         .expr_stmt => |expr_stmt| {
             try self.resolveExpr(expr_stmt);
@@ -336,19 +397,22 @@ pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
             try self.resolveExpr(print_stmt);
         },
         .return_stmt => |return_stmt| {
-            // _ = return_stmt; // autofix
-            // if (true) {
-            //     @panic("Unimplemented");
-            // }
             if (self.current_function == .none) {
                 return handleTokenError(
-                    Error.invalid_return,
+                    ResolveError.invalid_return,
                     return_stmt.keyword,
                     "Can't return from top level code.",
                 );
-                // return main.tokenError(return_stmt.keyword, "");
             }
             if (return_stmt.value) |expr| {
+                if (self.current_function == .initializer) {
+                    return handleTokenError(
+                        ResolveError.invalid_initializer_return,
+                        return_stmt.keyword,
+                        "Can't return a value from an initializer.",
+                    );
+                }
+
                 try self.resolveExpr(expr);
             }
         },
@@ -405,10 +469,21 @@ pub fn resolveExpr(self: *Resolver, expr: *Expr) Error!void {
         .set => |set| {
             try self.resolveExpr(set.value); // value being set to
             try self.resolveExpr(set.object); // object whouse property is being set
-            logger.warn(loggerscoper_beginScope, @src(),
+            logger.warn(beginScopeScoper, @src(),
                 \\Resolving set expression.
                 \\{s}Set: '{s}'."
             , .{ logger.indent, set.name.lexeme });
+        },
+        .this => |this| {
+            if (self.current_class == .none) {
+                return try handleTokenError(
+                    ResolveError.this_outside_class,
+                    this.keyword,
+                    "Can't use 'this' outside of a class.",
+                );
+            }
+
+            try self.resolveLocal(expr, this.keyword);
         },
         .unary => |unary| {
             try self.resolveExpr(unary.right);
@@ -418,7 +493,7 @@ pub fn resolveExpr(self: *Resolver, expr: *Expr) Error!void {
             if (!self.isEmptyScopeStack()) {
                 if (self.getLastScopeStackPtr().get(name)) |is_declared| {
                     if (!is_declared) {
-                        return handleTokenError(
+                        return try handleTokenError(
                             Error.undefined_variable,
                             variable,
                             "Can't read local variable in its own initializer.",
@@ -426,7 +501,7 @@ pub fn resolveExpr(self: *Resolver, expr: *Expr) Error!void {
                     }
                 }
             }
-            logger.info(loggerscoper_beginScope, @src(),
+            logger.info(beginScopeScoper, @src(),
                 \\Resolving variable initializer expression.
                 \\{s}variable: '{s}'."
             , .{ logger.indent, variable.lexeme });

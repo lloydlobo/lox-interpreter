@@ -4,6 +4,7 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 const StringHashMap = std.StringHashMap;
 
+const AstPrinter = @import("astprinter.zig");
 const Callable = @import("callable.zig");
 const Class = @import("class.zig");
 const Environment = @import("environment.zig");
@@ -66,7 +67,10 @@ const RuntimeError = error{
 };
 
 /// Not actual errors, but a way to propagate return values.
-const PropagationException = error{@"return"};
+pub const PropagationException = error{
+    /// Error indicates that a procedure returned either nil or `Value`.
+    return_value,
+};
 
 pub const Error = RuntimeError || PropagationException || Environment.Error || Allocator.Error;
 
@@ -113,11 +117,9 @@ pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
 pub fn panicRuntimeError(err: Error, token: Token) noreturn {
     runtime_token = token;
     runtime_error = err;
-
     handleRuntimeError(err) catch |e| {
         root.exit(.exit_failure, "{any}", .{e});
     };
-
     root.exit(.exit_failure, "{any}", .{err});
 }
 
@@ -155,7 +157,7 @@ pub fn handleRuntimeError(err: Error) Allocator.Error!void {
         },
 
         // PropagationException
-        error.@"return" => {
+        error.return_value => {
             return logger.err(.default, @src(), "Trick to propagate return values with errors '{any}' {any}.", .{
                 runtime_token,
                 runtime_return_value,
@@ -320,8 +322,11 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
     return switch (callee) {
         .callable => |callable| blk: {
             if (callable.arity() != args_count) {
-                runtime_token = call.paren; // FIXME: options?
-                runtime_token = call.callee.get.name;
+                runtime_token = switch (call.callee.*) {
+                    .variable => |variable| variable,
+                    .get => |get| get.name,
+                    else => unreachable,
+                };
                 break :blk Error.wrong_arity;
             }
             break :blk callable.call(self, try arguments.toOwnedSlice());
@@ -329,8 +334,11 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
         .function => |function| blk: {
             if (function.callable.arity() != args_count) {
                 runtime_token = call.paren; // FIXME: options?
-                // thread 257403 panic: access of union field 'variable' while field 'get' is active
-                runtime_token = call.callee.get.name;
+                runtime_token = switch (call.callee.*) {
+                    .variable => |variable| variable,
+                    .get => |get| get.name,
+                    else => unreachable,
+                };
                 break :blk Error.wrong_arity;
             }
             break :blk function.callable.call(self, try arguments.toOwnedSlice());
@@ -466,6 +474,15 @@ fn visitSetExpr(self: *Self, expr: Expr.Set) Error!Value {
     };
 }
 
+fn visitThisExpr(self: *Self, expr: Expr.This) Error!Value {
+    // .{ .this = expr }
+    const this = try self.allocator.create(Expr);
+    errdefer self.allocator.destroy(this);
+
+    this.* = .{ .this = expr };
+    return try self.lookupVariable(expr.keyword, this);
+}
+
 fn visitUnaryExpr(self: *Self, expr: Expr.Unary) Error!Value {
     const r = try self.evaluate(expr.right);
 
@@ -487,28 +504,37 @@ fn visitVariableExpr(self: *Self, expr: *Expr) Error!Value {
 }
 
 fn lookupVariable(self: *Self, name: Token, expr: *Expr) Error!Value {
-    _ = name; // autofix
+    // FIXME: While solving the above, got following error:
+    //       interpreter.zig:lookupVariable:527:27: warn: Looking up variable 'THIS this null'.
+    //
+    //   thread 382539 panic: reached unreachable code
+    //      environment = environment.enclosing orelse unreachable;
+    //                                                 ^
+    //      src/environment.zig:99:29: 0x10ead01 in getAt (main)
+    //      return try self.ancestor(distance).get(name);
+    // FIXED: Assume this is due to creating binding environment (via function
+    //        closure), but not initEnclosing it to any:
+    //
+    //      defer self.closure.enclosing = environment;
+    logger.info(.default, @src(), "Looking up variable '{}'.", .{name});
 
-    const distance: i32 = self.locals.get(expr.variable.lexeme) orelse {
-        return self.globals.get(expr.variable) catch |err_1| switch (err_1) {
-            error.variable_not_declared => self.environment.get(
-                expr.variable,
-            ) catch |err_2| switch (err_2) {
+    const distance: i32 = self.locals.get(name.lexeme) orelse {
+        return self.globals.get(name) catch |err| switch (err) {
+            error.variable_not_declared => self.environment.get(expr.variable) catch |e| switch (e) {
                 error.variable_not_declared => {
-                    undeclared_token = expr.variable;
-                    return err_2;
+                    undeclared_token = name;
+                    return e; // bail with error
                 },
                 else => |other| other,
             },
-
             else => |other| other,
         };
     };
 
-    return self.environment.getAt(distance, expr.variable) catch |err| switch (err) {
-        error.variable_not_declared => {
-            undeclared_token = expr.variable;
-            return err;
+    return self.environment.getAt(distance, name) catch |err| switch (err) {
+        error.variable_not_declared => blk: {
+            undeclared_token = name;
+            break :blk err;
         },
         else => |other| other,
     };
@@ -552,6 +578,13 @@ fn lookupVariableOld(self: *Self, name: Token, expr: *Expr) Error!Value {
 // Visit methods do a **post-order traversal**—each node evaluates its
 // children before doing its own work.
 fn evaluate(self: *Self, expr: *Expr) Error!Value {
+    if (comptime debug.is_trace_interpreter and debug.is_trace_astprinter) {
+        AstPrinter.debugOtherVariants(root.stderr().writer(), expr) catch |err| {
+            root.exit(.exit_failure, "Failed to print ast expression '{s}': {any}", .{
+                expr.toString(), err,
+            });
+        };
+    }
     return switch (expr.*) {
         .assign => |assign| try self.visitAssignExpr(assign),
         .binary => |binary| try self.visitBinaryExpr(binary),
@@ -561,6 +594,7 @@ fn evaluate(self: *Self, expr: *Expr) Error!Value {
         .literal => |literal| try self.visitLiteralExpr(literal),
         .logical => |logical| try self.visitLogicalExpr(logical),
         .set => |set| try self.visitSetExpr(set),
+        .this => |this| try self.visitThisExpr(this),
         .unary => |unary| try self.visitUnaryExpr(unary),
         .variable => |_| try self.visitVariableExpr(expr),
     };
@@ -590,7 +624,7 @@ pub fn executeBlock(
             }
         },
         .new => {
-            var curr_env = Environment.initEnclosing(self.allocator, prev_env);
+            var curr_env: Environment = Environment.initEnclosing(self.allocator, prev_env);
             self.environment = &curr_env;
             for (body) |*stmt| {
                 _ = try self.execute(stmt, writer);
@@ -620,15 +654,28 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
                 logger.indent, logger.indent, class.name.lexeme,
                 logger.indent, logger.indent,
             });
+
             try self.environment.define(class.name.lexeme, Value.Nil);
 
             var methods = StringHashMap(Function).init(self.allocator);
-
             for (class.methods) |method| {
-                assert(@TypeOf(method) == Stmt.Function);
-                const function: *Function = try Function.init(self.allocator, self.environment, method);
-                assert(@TypeOf(function) != @TypeOf(method));
-                try methods.put(method.name.lexeme, function.*);
+                root.assume(@TypeOf(method) == Stmt.Function, .allow);
+                const is_initializer = Function.is_init_method(&method);
+                if (comptime debug.is_testing) {
+                    if (is_initializer) {
+                        root.assume(mem.eql(u8, method.name.lexeme, "init"), .allow);
+                    }
+                }
+                logger.warn(.default, @src(),
+                    \\method: {}, is_initializer in .class: {}.
+                , .{ method.name, is_initializer });
+
+                const fun = try Function.init(self.allocator, method, self.environment, is_initializer);
+                if (comptime debug.is_testing) {
+                    root.assume(@TypeOf(fun) != @TypeOf(method), .allow);
+                }
+
+                try methods.put(method.name.lexeme, fun.*);
             }
 
             const cls: *Class = try Class.init(self.allocator, class.name, methods);
@@ -654,7 +701,8 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
                 \\{s}Creating callable function '{s}'.
                 \\{s}Capturing function in current environment.
             , .{ logger.indent, function.name.lexeme, logger.indent });
-            const fun: *Function = try Function.init(self.allocator, self.environment, function);
+            const is_initializer = false; // User may use function with name "init". So no "this" to return.
+            const fun = try Function.init(self.allocator, function, self.environment, is_initializer);
             try self.environment.define(function.name.lexeme, .{ .function = fun });
         },
         .print_stmt => |expr| {
@@ -663,9 +711,12 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
         },
         .return_stmt => |return_stmt| {
             const value = if (return_stmt.value) |val| try self.evaluate(val) else null;
-            runtime_return_value = ReturnValue.fromValue(value).ret;
+            runtime_return_value = switch (ReturnValue.fromValue(value)) {
+                .nil => Value.Nil,
+                .ret => |ret| ret,
+            };
             runtime_token = return_stmt.keyword;
-            runtime_error = error.@"return";
+            runtime_error = error.return_value;
             return runtime_error; // trick to propagate return values across call stack
         },
         .var_stmt => |var_stmt| {
@@ -704,12 +755,6 @@ pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!vo
             assert(@TypeOf((try fun.call(self, &[_]Value{})).num) == f64);
         }
     }
-    // defer {
-    //     if (self.environment.values.count() != 0) {
-    //         self.environment.values.clearAndFree();
-    //     }
-    //     assert(self.environment.values.count() == 0);
-    // }
 
     for (stmts) |*stmt| {
         _ = self.execute(stmt, writer) catch |err| {

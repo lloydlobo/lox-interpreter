@@ -19,6 +19,7 @@ pub const Expr = union(enum) {
     literal: Value,
     logical: Logical,
     set: Set,
+    this: This,
     unary: Unary,
     variable: Token,
 
@@ -66,10 +67,48 @@ pub const Expr = union(enum) {
         value: *Expr,
     };
 
+    pub const This = struct {
+        keyword: Token,
+    };
+
     pub const Unary = struct {
         operator: Token,
         right: *Expr,
     };
+
+    /// Recursively find `this` in expressions.
+    pub fn findThisInExpr(self: ?*const Expr) ?Expr.This {
+        const expr: *const Expr = self orelse return null;
+
+        return switch (expr.*) {
+            .assign => findThisInExpr(expr.assign.value),
+            .binary => {
+                if (findThisInExpr(expr.binary.left)) |result| return result;
+                return findThisInExpr(expr.binary.right);
+            },
+            .call => {
+                if (findThisInExpr(expr.call.callee)) |result| return result;
+                for (expr.call.arguments) |arg| {
+                    if (findThisInExpr(arg)) |result| return result;
+                }
+                return null;
+            },
+            .get => findThisInExpr(expr.get.object),
+            .grouping => findThisInExpr(expr.grouping),
+            .literal => null,
+            .logical => {
+                if (findThisInExpr(expr.logical.left)) |result| return result;
+                return findThisInExpr(expr.logical.right);
+            },
+            .set => {
+                if (findThisInExpr(expr.set.object)) |result| return result;
+                return findThisInExpr(expr.set.value);
+            },
+            .this => expr.this,
+            .unary => findThisInExpr(expr.unary.right),
+            .variable => null,
+        };
+    }
 };
 
 test "Expr ─ basic usage" {
@@ -174,6 +213,7 @@ test "Expr ─ basic usage" {
 // "Literal       : Object value",
 // "Logical       : Expr left, Token operator, Expr right",,
 // "Set           : Expr object, Token name, Expr value",
+// "This          : Token keyword",
 // "Unary         : Token operator, Expr right",
 
 // "Block         : List<Stmt> statements",

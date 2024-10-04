@@ -67,11 +67,7 @@ pub fn destroy(self: *Class, allocator: Allocator) void {
 pub fn find_method(self: *Class, name: []const u8) ?Function {
     const methods: std.StringHashMap(Function) = self.methods;
 
-    if (methods.get(name)) |fun| {
-        return fun;
-    }
-
-    return null;
+    return methods.get(name) orelse null;
 }
 
 pub fn toString(callable: *const Callable) []const u8 {
@@ -92,29 +88,38 @@ pub fn call(
     interpreter: *Interpreter,
     arguments: []Value,
 ) Callable.Error!Value {
-    _ = arguments; // autofix
-    _ = interpreter; // autofix
     const self: *Class = @constCast(@fieldParentPtr("callable", callable));
 
-    const instance = Instance.init(
-        self.callable.allocator,
-        self,
-    ) catch |err| {
+    const instance = Instance.init(self.callable.allocator, self) catch |err| {
         Interpreter.runtime_token = self.name;
         try Interpreter.handleRuntimeError(err);
         return err;
     };
 
+    // We can do almost everything with classes now, and as we near the end of the
+    // chapter we find ourselves strangely "focused on a beginning".
+    // Methods and fields let us encapsulate state and behavior together so
+    // that an object always stays in a valid configuration.
+    // But how do we ensure a brand new object starts in a good state?
+    var initializer_fun: ?Function = self.find_method("init");
+    if (initializer_fun) |*initializer| {
+        const init_method: *Function = try initializer.bind(instance);
+        _ = try init_method.callable.call(interpreter, arguments);
+    }
     const out: Value = .{ .instance = instance };
+
     return out;
 }
 
-/// NOTE: Bare class initializers for now, so arity is 0.
+/// If there is an initializer, that method’s arity determines how many
+/// arguments you must pass when you call the class itself.
+/// We don’t require a class to define an initializer, though, as a
+/// convenience. If you don’t have an initializer, the arity is still zero.
 pub fn arity(callable: *const Callable) usize {
     const self: *Class = @constCast(@fieldParentPtr("callable", callable));
-    _ = self; // autofix
+    const initializer: Function = self.find_method("init") orelse return 0;
 
-    return 0;
+    return initializer.callable.arity();
 }
 
 test "stats" {

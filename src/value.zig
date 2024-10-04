@@ -107,7 +107,8 @@ pub const Value = union(enum) {
             return if (value) |v| switch (v) {
                 .nil => .{ .ret = Value.Nil },
                 else => |x| .{ .ret = x },
-            } else .nil; //> .{ .ret = Value.Nil };
+                // } else Return.nil; //> .{ .ret = Value.Nil };
+            } else .{ .ret = Value.Nil }; //> .{ .ret = Value.Nil };
         }
 
         pub fn toValue(self: *Return) Value {
