@@ -9,6 +9,8 @@ const Allocator = mem.Allocator;
 const debug = @import("debug.zig");
 const logger = @import("logger.zig");
 
+// [Zig idioms and codecrafters example code copied from](https://app.codecrafters.io/courses/interpreter/stages/fb4/code-examples?repo=22d0aedc-438f-4a1e-a88c-5736eb7b71db) by [User: 1nwf](https://app.codecrafters.io/users/1nwf) and others.
+
 // TODO:
 //
 // -> Property based testing
