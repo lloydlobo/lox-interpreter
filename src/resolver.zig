@@ -44,6 +44,7 @@ comptime {
 const ResolveError = error{
     this_outside_class,
     invalid_return,
+    invalid_initializer_return,
     undefined_variable,
     unused_variable,
     variable_already_declared,
@@ -89,6 +90,7 @@ pub fn handleTokenError(
 ) Allocator.Error!void {
     return switch (err) {
         ResolveError.invalid_return,
+        ResolveError.invalid_initializer_return,
         ResolveError.undefined_variable,
         ResolveError.unused_variable,
         ResolveError.variable_already_declared,
@@ -322,10 +324,14 @@ pub fn resolveStatements(self: *Resolver, statements: []const Stmt) Allocator.Er
     for (statements) |*stmt| {
         resolveStatement(self, stmt) catch |err| {
             const token_ptr = root.unionPayloadPtr(Token, stmt) orelse unreachable;
-            // logger.err(.default, @src(), "Found payload ptr.{s}[stmt: {any}, token: {any}]", //
-            //     .{ logger.newline, stmt, token_ptr });
+            logger.err(.default, @src(),
+                \\Found payload ptr.{s}[stmt: {any}, token: {any}]
+            , .{ logger.newline, stmt, token_ptr });
 
-            return try handleTokenError(err, token_ptr.*, "Failed to resolve statement.");
+            //
+            // NOTE: earlier we used to handle error and return ASAP.
+            //
+            try handleTokenError(err, token_ptr.*, "Failed to resolve statement.");
         };
     }
 }
@@ -357,8 +363,13 @@ pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
                 // right now, but we’ll expand this code before too long and it
                 // will make more sense.
                 try self.scopes.items[self.scopesSize() - 1].put("this", true);
+
                 for (class.methods) |*method| {
-                    const declaration: FunctionType = .method;
+                    var declaration: FunctionType = .method;
+                    if (mem.eql(u8, method.name.lexeme, "init")) {
+                        declaration = .initializer;
+                    } // See: https://craftinginterpreters.com/classes.html#returning-from-init
+
                     try self.resolveFunction(method, declaration);
                 }
             }
@@ -386,19 +397,22 @@ pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
             try self.resolveExpr(print_stmt);
         },
         .return_stmt => |return_stmt| {
-            // _ = return_stmt; // autofix
-            // if (true) {
-            //     @panic("Unimplemented");
-            // }
             if (self.current_function == .none) {
                 return handleTokenError(
-                    Error.invalid_return,
+                    ResolveError.invalid_return,
                     return_stmt.keyword,
                     "Can't return from top level code.",
                 );
-                // return main.tokenError(return_stmt.keyword, "");
             }
             if (return_stmt.value) |expr| {
+                if (self.current_function == .initializer) {
+                    return handleTokenError(
+                        ResolveError.invalid_initializer_return,
+                        return_stmt.keyword,
+                        "Can't return a value from an initializer.",
+                    );
+                }
+
                 try self.resolveExpr(expr);
             }
         },

@@ -93,11 +93,11 @@ pub fn is_init_method(declaration: *const Stmt.Function) bool {
 // , .{ logger.indent, self.declaration.name, logger.newline, callable.toString(), logger.newline, this_value });
 //
 // return this_value;
-fn returnThis(self: *Function) Value {
-    const this_token = self.declaration.name;
-    const this_value = try self.closure.getAt(0, this_token);
-    return this_value;
-}
+// fn returnThis(self: *Function) Value {
+//     const this_token = self.declaration.name;
+//     const this_value = try self.closure.getAt(0, this_token);
+//     return this_value;
+// }
 
 /// Creates a new environment within the method’s closure, binding "this" to
 /// the instance. This ensures the method retains the bound instance for future
@@ -188,6 +188,18 @@ pub fn call(
                 Interpreter.runtime_return_value = undefined;
                 Interpreter.runtime_token = undefined;
             }
+            // https://craftinginterpreters.com/classes.html#returning-from-init
+            if (self.is_initializer) {
+                return self.closure.getAtAuto([]const u8, 0, "this") catch |env_err|
+                    {
+                    switch (env_err) {
+                        error.OutOfMemory => try Interpreter.handleRuntimeError(env_err),
+                        inline else => Interpreter.panicRuntimeError(env_err, Interpreter.runtime_token), // panics
+                    }
+                    return Error.OutOfMemory;
+                };
+            }
+
             return Interpreter.runtime_return_value;
         },
         else => {
@@ -199,13 +211,26 @@ pub fn call(
     if (self.is_initializer) {
         root.assume(mem.eql(u8, self.declaration.name.lexeme, "init") and
             mem.eql(u8, callable.toString(), "<fn init>"), .allow);
-
+        // EXAMPLE:
+        //
+        // class EmptyBar {
+        //     fun init() {
+        //         return;
+        //     }
+        // };
+        //
+        // var empty_bar = EmptyBar();
+        //
+        // print empty_bar; //> EmptyBar instance
+        // print empty_bar.init(); //> Now it returns EmptyBar instance instead of nil
         return self.closure.getAtAuto([]const u8, 0, "this") catch |err| blk: {
             const stmt: *const Stmt = &.{ .function = self.declaration };
+
             Interpreter.runtime_token = if (stmt.extractThisExpr()) |this| this.keyword else unreachable;
+
             switch (err) {
                 error.OutOfMemory => try Interpreter.handleRuntimeError(err),
-                inline else => Interpreter.panicRuntimeError(err, Interpreter.runtime_token),
+                inline else => Interpreter.panicRuntimeError(err, Interpreter.runtime_token), // panics
             }
 
             break :blk Error.OutOfMemory;

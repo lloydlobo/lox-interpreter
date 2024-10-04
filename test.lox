@@ -83,12 +83,13 @@ print "# Class";
             class Bar {
                 fun init() {
                     print this;
-                    return 42;
+                    // Can't return from an initializer
+                    // return 42;
                 }
             };
 
             var bar = Bar(); //> Bar instance
-            print bar.init(); //> Bar instance\n42
+            print bar.init(); //> Bar instance
 
             fun init() {
                 // Error at 'this': Can't use 'this' outside of a class.
@@ -103,31 +104,58 @@ print "# Class";
 
 }
 
-{
+print "Skipping block that has errors due to 'invoking init() directly'.";
+if (true) {
+    var is_enabled_block = true;
+
     // FIXME:
     //
     // NO ERROR REPORTED WHEN UNDEFINED VARIABLE IN A BLOCK SCOPE
     class Foo { };
     var foo = Foo();
 
-    // {
-    //     print is_reported;
-    // }
+    // ok
+    is_enabled_block = false;
+    if (is_enabled_block) {
+        print is_reported_at_runtime;
+    }
 
-    class Bar {
+    // TODO: That is actually kind of useful sometimes, so we don’t want to
+    // disallow it entirely. Instead, it should return this instead of nil.
+    // That’s an easy fix over in LoxFunction.
+    //
+    // FIXME: FIXED
+    // Skipping block that has errors due to 'invoking init() directly'.
+    //     interpreter.execute:669:39: warn: method: IDENTIFIER init null,
+    //      is_initializer in .class: true.
+    // thread 7990 panic: access of union field 'ret' while field 'nil' is active
+    // interpreter.zig:714:64: 0x107a69a in execute__anon_6626 (main)
+    //             runtime_return_value = ReturnValue.fromValue(value).ret;
+    //                                                                ^
+    // interpreter.zig:623:37: 0x10ba945 in executeBlock__anon_10207 (main)
+    //                 _ = try self.execute(statement, writer);
+    class EmptyBar {
         fun init() {
-            // 
+            return;
         }
-
     };
+    var empty_bar = EmptyBar();
+    print empty_bar; //> EmptyBar instance
+    print empty_bar.init(); //> nil
 
-    var bar = Bar();
-    bar.init();
-
-    {
-        print is_not_reported;
+    // !ok
+    is_enabled_block = false;
+    print "is_enabled_block:";
+    print is_enabled_block;
+    // MAKE SURE WE DO NOT SKIP RESOLVER CHECKS IF THERE IS INIT. 
+    // I GUESS, due to binding this, we are skipping the current
+    // closure/environment just after init totally?
+    if (is_enabled_block) {
+        print is_not_reported_at_runtime;
     }
 }
+
+
 
 
 // see `:h modeline`

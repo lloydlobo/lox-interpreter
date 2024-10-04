@@ -624,7 +624,7 @@ pub fn executeBlock(
             }
         },
         .new => {
-            var curr_env = Environment.initEnclosing(self.allocator, prev_env);
+            var curr_env: Environment = Environment.initEnclosing(self.allocator, prev_env);
             self.environment = &curr_env;
             for (body) |*stmt| {
                 _ = try self.execute(stmt, writer);
@@ -654,15 +654,27 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
                 logger.indent, logger.indent, class.name.lexeme,
                 logger.indent, logger.indent,
             });
+
             try self.environment.define(class.name.lexeme, Value.Nil);
 
             var methods = StringHashMap(Function).init(self.allocator);
-
             for (class.methods) |method| {
                 root.assume(@TypeOf(method) == Stmt.Function, .allow);
                 const is_initializer = Function.is_init_method(&method);
+                if (comptime debug.is_testing) {
+                    if (is_initializer) {
+                        root.assume(mem.eql(u8, method.name.lexeme, "init"), .allow);
+                    }
+                }
+                logger.warn(.default, @src(),
+                    \\method: {}, is_initializer in .class: {}.
+                , .{ method.name, is_initializer });
+
                 const fun = try Function.init(self.allocator, method, self.environment, is_initializer);
-                root.assume(@TypeOf(fun) != @TypeOf(method), .allow);
+                if (comptime debug.is_testing) {
+                    root.assume(@TypeOf(fun) != @TypeOf(method), .allow);
+                }
+
                 try methods.put(method.name.lexeme, fun.*);
             }
 
@@ -699,7 +711,10 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
         },
         .return_stmt => |return_stmt| {
             const value = if (return_stmt.value) |val| try self.evaluate(val) else null;
-            runtime_return_value = ReturnValue.fromValue(value).ret;
+            runtime_return_value = switch (ReturnValue.fromValue(value)) {
+                .nil => Value.Nil,
+                .ret => |ret| ret,
+            };
             runtime_token = return_stmt.keyword;
             runtime_error = error.return_value;
             return runtime_error; // trick to propagate return values across call stack
