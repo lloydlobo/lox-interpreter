@@ -180,6 +180,50 @@ fn endScope(self: *Resolver) void {
     }
 }
 
+//
+// declare()
+//
+//
+//
+//
+//
+// FIXME: NO ERROR REPORTED WHEN UNDEFINED VARIABLE IN A BLOCK SCOPE THAT FOLLOWS A CLASS.
+//
+// I suspect it is because of initEnclosing used for call "this"
+//
+//     class Foo { };
+//     var foo = Foo();
+//
+//     // {
+//     //     print is_reported;
+//     // }
+//
+//     class Bar {
+//         fun init() {
+//             //
+//         }
+//
+//     };
+//
+//     var bar = Bar();
+//     bar.init();
+//
+//     {
+//         print is_not_reported;
+//     }
+//
+//
+//
+// Declaration adds the variable to the innermost scope so that it shadows any
+// outer one and so that we know the variable exists. We mark it as “not ready
+// yet” by binding its name to false in the scope map. The value associated
+// with a key in the scope map represents whether or not we have finished
+// resolving that variable’s initializer.
+//
+// When we declare a variable in a local scope, we already know the names
+// of every variable previously declared in that same scope. If we see a
+// collision, we report an error.
+//
 fn declare(self: *Resolver, name: Token) Allocator.Error!void {
     const scoper: logger.Scoper = .{ .scope = .{
         .name = @src().fn_name,

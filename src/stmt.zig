@@ -129,6 +129,50 @@ pub const Stmt = union(enum) {
             assert(@alignOf(@This()) == 8);
         }
     };
+
+    pub fn extractThisExpr(self: *const Stmt) ?Expr.This {
+        switch (self.*) {
+            .block => |block| {
+                for (block) |*innerStmt| {
+                    if (extractThisExpr(innerStmt)) |result| {
+                        return result;
+                    }
+                }
+                return null;
+            },
+            .break_stmt => return null,
+            .class => |class| {
+                for (class.methods) |method| {
+                    if (extractThisExpr(&Stmt{ .function = method })) |result| {
+                        return result;
+                    }
+                }
+                return null;
+            },
+            .expr_stmt => |expr_stmt| return expr_stmt.findThisInExpr(),
+            .function => |function| {
+                for (function.body) |*innerStmt| {
+                    if (extractThisExpr(innerStmt)) |result| {
+                        return result;
+                    }
+                }
+                return null;
+            },
+            .if_stmt => |if_stmt| {
+                if (if_stmt.condition.findThisInExpr()) |result| return result;
+                if (extractThisExpr(if_stmt.then_branch)) |result| return result;
+                if (if_stmt.else_branch) |elseBranch| {
+                    if (extractThisExpr(elseBranch)) |result| return result;
+                }
+                return null;
+            },
+            .print_stmt => |print_stmt| return print_stmt.findThisInExpr(),
+            .return_stmt => |return_stmt| return return_stmt.value.?.findThisInExpr(),
+            .var_stmt => |var_stmt| return var_stmt.initializer.?.findThisInExpr(),
+            .while_stmt => |while_stmt| return while_stmt.condition.findThisInExpr() orelse
+                extractThisExpr(while_stmt.body),
+        }
+    }
 };
 
 test "basic usage" {

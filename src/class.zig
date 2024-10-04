@@ -67,11 +67,7 @@ pub fn destroy(self: *Class, allocator: Allocator) void {
 pub fn find_method(self: *Class, name: []const u8) ?Function {
     const methods: std.StringHashMap(Function) = self.methods;
 
-    if (methods.get(name)) |fun| {
-        return fun;
-    }
-
-    return null;
+    return methods.get(name) orelse null;
 }
 
 pub fn toString(callable: *const Callable) []const u8 {

@@ -67,7 +67,10 @@ const RuntimeError = error{
 };
 
 /// Not actual errors, but a way to propagate return values.
-const PropagationException = error{@"return"};
+pub const PropagationException = error{
+    /// Error indicates that a procedure returned either nil or `Value`.
+    return_value,
+};
 
 pub const Error = RuntimeError || PropagationException || Environment.Error || Allocator.Error;
 
@@ -114,11 +117,9 @@ pub fn init(allocator: Allocator) Allocator.Error!Interpreter {
 pub fn panicRuntimeError(err: Error, token: Token) noreturn {
     runtime_token = token;
     runtime_error = err;
-
     handleRuntimeError(err) catch |e| {
         root.exit(.exit_failure, "{any}", .{e});
     };
-
     root.exit(.exit_failure, "{any}", .{err});
 }
 
@@ -156,7 +157,7 @@ pub fn handleRuntimeError(err: Error) Allocator.Error!void {
         },
 
         // PropagationException
-        error.@"return" => {
+        error.return_value => {
             return logger.err(.default, @src(), "Trick to propagate return values with errors '{any}' {any}.", .{
                 runtime_token,
                 runtime_return_value,
@@ -658,10 +659,11 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
             var methods = StringHashMap(Function).init(self.allocator);
 
             for (class.methods) |method| {
-                assert(@TypeOf(method) == Stmt.Function);
-                const function: *Function = try Function.init(self.allocator, method, self.environment);
-                assert(@TypeOf(function) != @TypeOf(method));
-                try methods.put(method.name.lexeme, function.*);
+                root.assume(@TypeOf(method) == Stmt.Function, .allow);
+                const is_initializer = Function.is_init_method(&method);
+                const fun = try Function.init(self.allocator, method, self.environment, is_initializer);
+                root.assume(@TypeOf(fun) != @TypeOf(method), .allow);
+                try methods.put(method.name.lexeme, fun.*);
             }
 
             const cls: *Class = try Class.init(self.allocator, class.name, methods);
@@ -687,7 +689,8 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
                 \\{s}Creating callable function '{s}'.
                 \\{s}Capturing function in current environment.
             , .{ logger.indent, function.name.lexeme, logger.indent });
-            const fun: *Function = try Function.init(self.allocator, function, self.environment);
+            const is_initializer = false; // User may use function with name "init". So no "this" to return.
+            const fun = try Function.init(self.allocator, function, self.environment, is_initializer);
             try self.environment.define(function.name.lexeme, .{ .function = fun });
         },
         .print_stmt => |expr| {
@@ -698,7 +701,7 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
             const value = if (return_stmt.value) |val| try self.evaluate(val) else null;
             runtime_return_value = ReturnValue.fromValue(value).ret;
             runtime_token = return_stmt.keyword;
-            runtime_error = error.@"return";
+            runtime_error = error.return_value;
             return runtime_error; // trick to propagate return values across call stack
         },
         .var_stmt => |var_stmt| {

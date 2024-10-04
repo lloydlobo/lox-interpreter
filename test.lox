@@ -19,43 +19,116 @@ print "# Class";
         class Cake {
             fun taste() {
                 var adjective = "delicious";
+                if (this.flavor == "Belgian chocolate") {
+                    adjective = "yummy";
+                }
                 print "The " + this.flavor + " cake is " + adjective + "!";
+
+                this.tasted_counter = this.tasted_counter + 1;
+                if (this.tasted_counter >= 2) {
+                    print "But now I am full.";
+                }
             }
         };
 
         var cake = Cake();
         cake.flavor = "German chocolate";
+        cake.tasted_counter = 0;
+
         cake.taste();//> The German chocolate cake is delicious!
+        print cake.tasted_counter; //> 1
 
         cake.flavor = "Belgian chocolate";
-        var taste_belgian_cake_method = cake.taste;
-        taste_belgian_cake_method(); //> The Belgian chocolate cake is delicious!
+        {
+            var taste_cake_method = cake.taste;
+
+            taste_cake_method(); //> The Belgian chocolate cake is delicious!\nBut now I am full.
+            print cake.tasted_counter; //> 2
+            print taste_cake_method; //> <fn taste>
+        }
+
     }
-}
 
-{ print "## Class ─ This: Invalid uses of this";
-    // Error at 'this': Can't use 'this' outside of a class.
-    // print this;
-
-    fun not_a_method() {
+    { print "### Class ─ This: Invalid uses of this";
         // Error at 'this': Can't use 'this' outside of a class.
         // print this;
-    }
 
-    not_a_method(); //> Undefined variable 'this'.
+        fun not_a_method() {
+            // Error at 'this': Can't use 'this' outside of a class.
+            // print this;
+        }
+
+        not_a_method(); //> Undefined variable 'this'.
+    }
 }
+
 
 { print "## Class ─ Constructors & Initializer";
 
     class Foo {
         fun init() {
             print this;
+            // return nil;
         }
     };
 
     var foo = Foo(); //> Foo instance
-    print foo; //> Foo instance
+
+    { print "### Class ─ Constructors & Initializer: Invoking init() directly";
+        { // Without `return` in `init()`.
+            print foo.init(); //> Foo instance
+        }
+
+        { // With `return` in `init()`.
+            class Bar {
+                fun init() {
+                    print this;
+                    return 42;
+                }
+            };
+
+            var bar = Bar(); //> Bar instance
+            print bar.init(); //> Bar instance\n42
+
+            fun init() {
+                // Error at 'this': Can't use 'this' outside of a class.
+                // print this;
+                print 4;
+                return 2;
+            }
+
+            print init(); //> 4\n2
+        } 
+    }
+
 }
+
+{
+    // FIXME:
+    //
+    // NO ERROR REPORTED WHEN UNDEFINED VARIABLE IN A BLOCK SCOPE
+    class Foo { };
+    var foo = Foo();
+
+    // {
+    //     print is_reported;
+    // }
+
+    class Bar {
+        fun init() {
+            // 
+        }
+
+    };
+
+    var bar = Bar();
+    bar.init();
+
+    {
+        print is_not_reported;
+    }
+}
+
 
 // see `:h modeline`
 // vim: set commentstring=//\ %s :

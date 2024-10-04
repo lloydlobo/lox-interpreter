@@ -124,6 +124,42 @@ pub fn printStringHashMap(map: anytype) void {
     std.log.debug("}}", .{});
 }
 
+pub const StringValueKV = struct {
+    key: []const u8,
+    value: Value,
+    const Value = @import("value.zig").Value;
+
+    pub fn format(
+        self: StringValueKV,
+        comptime _: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        try std.fmt.format(writer, "{s}: {any}", .{ self.key, self.value });
+    }
+};
+
+pub fn listFromStringValueHashmap(
+    allocator: Allocator,
+    map: anytype,
+) Allocator.Error![]StringValueKV {
+    std.log.debug("StringHashMap(anytype) {{", .{});
+
+    var list = std.ArrayList(StringValueKV).init(allocator);
+    errdefer list.deinit();
+
+    var it = map.iterator();
+    while (it.next()) |entry| {
+        const key = entry.key_ptr.*;
+        const value = entry.value_ptr.*;
+        try list.append(.{ .key = key, .value = value });
+        // std.log.debug("    {{ '{s}' = {any}, }}", .{ key, value });
+    }
+
+    std.log.debug("}}", .{});
+    return try list.toOwnedSlice();
+}
+
 pub inline fn isAlphaNumeric(c: u8) bool {
     return switch (c) {
         '_', 'a'...'z', 'A'...'Z', '0'...'9' => true,
@@ -303,6 +339,55 @@ test "any ─ with empty array" { // This test should fail to compile
         const empty_array = [_]i32{};
         _ = any(i32, &empty_array, null);
     }
+}
+
+pub const Assume = union(enum) {
+    allow,
+    skip: struct {
+        reason: []const u8,
+        src: std.builtin.SourceLocation,
+    },
+};
+
+/// Stupid but comforting hack to use compiler hueristics builtin with
+/// `std.debug.assert` without invoking undefined behavior if`ok` is `false`.
+///
+/// Example:
+/// ```zig
+/// root.assume(mem.eql(u8, init_token.lexeme, "init") and mem.eql(u8, callable.toString(), "<fn init>"), .allow);
+/// ```
+pub inline fn assume(ok: bool, option: Assume) void {
+    switch (option) {
+        .allow => assert(ok),
+        .skip => |skip| blk: {
+            if (comptime ok) {
+                break :blk assert(ok);
+            }
+            if (comptime debug.is_testing) {
+                testing.expect(ok) catch |err| eprint("{s}:{s}:{d}:{d} '{}'\n\tReason: {s}\n", .{
+                    skip.src.file,   skip.src.fn_name, skip.src.line,
+                    skip.src.column, err,              skip.reason,
+                });
+            }
+        },
+    }
+}
+
+test "test assume with allow" {
+    // This should pass without any issues
+    assume(true, .allow);
+
+    // This should trigger an assertion failure
+    // Uncommenting the next line should fail the test
+    // assume(false, Assume.allow);
+}
+
+test "test assume with skip" {
+    // This should pass without any issues
+    assume(true, .{ .skip = .{ .src = @src(), .reason = "No reason needed, just testing." } });
+
+    // This should pass and log the failure without stopping the test
+    assume(false, .{ .skip = .{ .src = @src(), .reason = "Simulating a failure." } });
 }
 
 // See https://stackoverflow.com/a/66665672
