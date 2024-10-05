@@ -73,11 +73,6 @@ pub fn find_method(self: *Class, name: []const u8) ?Function {
 pub fn toString(callable: *const Callable) []const u8 {
     const self: *Class = @constCast(@fieldParentPtr("callable", callable));
     const name: []const u8 = self.name.lexeme;
-    // const buffer: []u8 = try std.fmt.allocPrint(
-    //     callable.allocator,
-    //     "{s}", // "<class {s}>",
-    //     .{self.name.lexeme},
-    // );
 
     return name;
 }
@@ -153,8 +148,6 @@ test "Class toString" {
         .methods = &[_]Stmt.Function{},
     };
 
-    // /home/lloyd/p/lang_zig/crafting-interpreters-zig/src/function.zig:163:25: 0x1060e0b in test.Function toString (test)
-    //     defer allocator.free(result);
     const cls = try Class.init(allocator, class_declaration.name);
 
     const result = cls.callable.toString();

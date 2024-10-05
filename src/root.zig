@@ -9,6 +9,8 @@ const Allocator = mem.Allocator;
 const debug = @import("debug.zig");
 const logger = @import("logger.zig");
 
+// [Zig idioms and codecrafters example code copied from](https://app.codecrafters.io/courses/interpreter/stages/fb4/code-examples?repo=22d0aedc-438f-4a1e-a88c-5736eb7b71db) by [User: 1nwf](https://app.codecrafters.io/users/1nwf) and others.
+
 // TODO:
 //
 // -> Property based testing
@@ -389,28 +391,3 @@ test "test assume with skip" {
     // This should pass and log the failure without stopping the test
     assume(false, .{ .skip = .{ .src = @src(), .reason = "Simulating a failure." } });
 }
-
-// See https://stackoverflow.com/a/66665672
-//
-// Array concatenation operator, for two comptime-known strings:
-//
-// const final_url = "https://github.com/" ++ user ++ "/reponame";
-// std.fmt.comptimePrint for comptime-known strings and numbers and other formattable things:
-//
-// const final_url = comptime std.fmt.comptimePrint("https://github.com/{s}/reponame", .{user});
-// Runtime, with allocation:
-//
-// const final_url = try std.fmt.allocPrint(alloc, "https://github.com/{s}/reponame", .{user});
-// defer alloc.free(final_url);
-// Runtime, no allocation, with a comptime-known maximum length:
-//
-// var buffer = [_]u8{undefined} ** 100;
-// const printed = try std.fmt.bufPrint(&buffer, "https://github.com/{s}/reponame", .{user});
-// Runtime, using ArrayList
-//
-// var string = std.ArrayList(u8).init(gpa);
-// defer string.deinit();
-// try string.appendSlice("https://github.com/");
-// try string.appendSlice(user);
-// try string.appendSlice("/reponame");
-// const final_url = string.items;

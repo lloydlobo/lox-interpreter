@@ -85,12 +85,6 @@ pub const Value = union(enum) {
                 instance.callable.toString(),
                 instance.callable.arity(),
             }),
-
-            // inline .class, .instance => |c| try std.fmt.format(
-            //     writer,
-            //     "{s}(<arity {d}>)",
-            //     .{ c.callable.toString(), c.*.arity() },
-            // ),
         }
     }
 
@@ -118,34 +112,6 @@ pub const Value = union(enum) {
             };
         }
     };
-
-    // pub const LoxFunction = struct {
-    //     /// `Context` pointer to hold function-specific data.
-    //     context: *anyopaque,
-    //
-    //     // `LoxCallable` Traits
-    //     arityFn: *const fn (*anyopaque) usize,
-    //     callFn: *const fn (*anyopaque, *Interpreter, []Value) Value,
-    //     toStringFn: *const fn (*anyopaque) []const u8,
-    //
-    //     comptime {
-    //         assert(@sizeOf(@This()) == 32);
-    //         assert(@alignOf(@This()) == 8);
-    //     }
-    //
-    //     // `LoxCallable` Implementaion
-    //     pub fn arity(self: *LoxFunction) usize {
-    //         return self.arityFn(self.context);
-    //     }
-    //     pub fn call(self: *LoxFunction, interpreter: *Interpreter, arguments: []Value) Value {
-    //         return self.callFn(self.context, interpreter, arguments);
-    //     }
-    //     pub fn toString(self: *LoxFunction) []const u8 {
-    //         return self.toStringFn(self.context);
-    //     }
-    //
-    //     // See https://craftinginterpreters.com/functions.html#function-objects
-    // };
 
     /// The new classDecl rule relies on the function rule we defined
     /// earlier. To refresh your memory:

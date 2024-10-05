@@ -5,16 +5,16 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 
 const Callable = @import("callable.zig");
-const Instance = @import("instance.zig");
 const Environment = @import("environment.zig");
 const Expr = @import("expr.zig").Expr;
+const Instance = @import("instance.zig");
 const Interpreter = @import("interpreter.zig");
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
 const Value = @import("value.zig").Value;
+const debug = @import("debug.zig");
 const logger = @import("logger.zig");
 const root = @import("root.zig");
-const debug = @import("debug.zig");
 
 const Function = @This();
 
@@ -67,37 +67,6 @@ pub fn destroy(self: *Function, allocator: Allocator) void {
 pub fn is_init_method(declaration: *const Stmt.Function) bool {
     return mem.eql(u8, declaration.name.lexeme, "init");
 }
-
-// assert(mem.eql(u8, self.declaration.name.lexeme, "init") and mem.eql(u8, callable.toString(), "<fn init>"));
-// const this_token: Token = blk: { // can just assign `lexeme` to "this", but seems hacky.
-//     const stmt: *const Stmt = &.{ .function = self.declaration };
-//     break :blk if (stmt.extractThisExpr()) |this| this.keyword else @panic("unreachable");
-// };
-//
-// const this_value = self.closure.getAt(0, this_token) catch |err| switch (err) {
-//     error.OutOfMemory => |alloc_err| {
-//         Interpreter.runtime_token = this_token;
-//         try Interpreter.handleRuntimeError(alloc_err);
-//         return alloc_err;
-//     },
-//     error.variable_not_declared => |env_err| {
-//         Interpreter.runtime_token = this_token;
-//         Interpreter.panicRuntimeError(env_err, this_token);
-//         unreachable;
-//     },
-// };
-//
-// if (comptime debug.is_trace_interpreter) logger.debug(.default, @src(),
-//     \\Forcibly returning "this" value at closure of distance '0'.
-//     \\{s}declaration: {}.{s}callable: {s}.{s}!this instance: {any}
-// , .{ logger.indent, self.declaration.name, logger.newline, callable.toString(), logger.newline, this_value });
-//
-// return this_value;
-// fn returnThis(self: *Function) Value {
-//     const this_token = self.declaration.name;
-//     const this_value = try self.closure.getAt(0, this_token);
-//     return this_value;
-// }
 
 /// Creates a new environment within the method’s closure, binding "this" to
 /// the instance. This ensures the method retains the bound instance for future
@@ -163,8 +132,6 @@ pub fn call(
     environment = self.closure;
 
     for (self.declaration.parameters, 0..) |param, i| {
-        // TODO: use handle error.... this is wip as we build upon class,
-        // methods, inheritance, etc...
         if (i >= arguments.len) {
             @panic("Parameter and argument count mismatch");
         }
@@ -211,8 +178,9 @@ pub fn call(
     if (self.is_initializer) {
         root.assume(mem.eql(u8, self.declaration.name.lexeme, "init") and
             mem.eql(u8, callable.toString(), "<fn init>"), .allow);
-        // EXAMPLE:
+        // FIXME: See [issue #5](https://github.com/lloydlobo/crafting-interpreters-zig/issues/5)
         //
+        // ```lox
         // class EmptyBar {
         //     fun init() {
         //         return;
@@ -223,6 +191,9 @@ pub fn call(
         //
         // print empty_bar; //> EmptyBar instance
         // print empty_bar.init(); //> Now it returns EmptyBar instance instead of nil
+        //
+        // print my_undeclared_token; // Resolver fails to report this static error!
+        // ```
         return self.closure.getAtAuto([]const u8, 0, "this") catch |err| blk: {
             const stmt: *const Stmt = &.{ .function = self.declaration };
 

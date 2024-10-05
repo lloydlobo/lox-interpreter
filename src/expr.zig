@@ -116,6 +116,8 @@ test "Expr ─ basic usage" {
     try testing.expectEqual(1, @alignOf(@This()));
 }
 
+// TODO: implement this boilerplate property testing for Expr:
+//
 // // Property: Reversing a list twice should return the original list
 // fn reverseProperty(list: []i32) bool {
 //     const reversed1 = reverse(list);

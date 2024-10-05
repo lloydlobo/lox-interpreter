@@ -38,8 +38,6 @@ comptime {
     assert(@alignOf(@This()) == 8);
 }
 
-/// TODO: prefix with `g_`, since these are mutated from different files.
-///
 /// Uses thread-local variables to communicate out-of-band error information.
 ///
 /// See also:
@@ -343,15 +341,6 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
             }
             break :blk function.callable.call(self, try arguments.toOwnedSlice());
         },
-        // Right now, if you try this:
-        //      class Bagel {}
-        //      Bagel();
-        //
-        // You get a runtime error. visitCallExpr() checks to see if the called
-        // object implements LoxCallable and reports an error since LoxClass
-        // doesn’t. Not yet, that is.
-        //
-        // See https://craftinginterpreters.com/classes.html#creating-instances
         .class => |class| blk: {
             assert(mem.eql(u8, class.name.lexeme, call.callee.variable.lexeme));
             assert(call.callee.variable.literal == null);
@@ -375,26 +364,6 @@ fn visitCallExpr(self: *Self, call: Expr.Call) Error!Value {
         },
     };
 }
-
-// _ = instance;
-// If the object is a LoxInstance, then we ask it to look up the property. It must be time to give LoxInstance some actual state. A map will do fine.
-//
-//   private LoxClass klass;
-//   private final Map<String, Object> fields = new HashMap<>();
-//
-//   LoxInstance(LoxClass klass) {
-// lox/LoxInstance.java, in class LoxInstance
-// Each key in the map is a property name and the corresponding value is the property’s value. To look up a property on an instance:
-//
-//   Object get(Token name) {
-//     if (fields.containsKey(name.lexeme)) {
-//       return fields.get(name.lexeme);
-//     }
-//
-//     throw new RuntimeError(name,
-//         "Undefined property '" + name.lexeme + "'.");
-//   }
-//
 
 // In theory, we can now read properties on objects. But since there’s no way
 // to actually stuff any state into an instance, there are no fields to access.
@@ -503,19 +472,21 @@ fn visitVariableExpr(self: *Self, expr: *Expr) Error!Value {
     };
 }
 
+// NOTE: Leaving this here as a reminder for [issue #5](https://github.com/lloydlobo/crafting-interpreters-zig/issues/5)
+//
+// FIXED: While solving the above, got following error:
+//       interpreter.zig:lookupVariable:527:27: warn: Looking up variable 'THIS this null'.
+//
+//   thread 382539 panic: reached unreachable code
+//      environment = environment.enclosing orelse unreachable;
+//                                                 ^
+//      src/environment.zig:99:29: 0x10ead01 in getAt (main)
+//      return try self.ancestor(distance).get(name);
+// FIXED: Assume this is due to creating binding environment (via function
+//        closure), but not initEnclosing it to any:
+//
+//      defer self.closure.enclosing = environment;
 fn lookupVariable(self: *Self, name: Token, expr: *Expr) Error!Value {
-    // FIXME: While solving the above, got following error:
-    //       interpreter.zig:lookupVariable:527:27: warn: Looking up variable 'THIS this null'.
-    //
-    //   thread 382539 panic: reached unreachable code
-    //      environment = environment.enclosing orelse unreachable;
-    //                                                 ^
-    //      src/environment.zig:99:29: 0x10ead01 in getAt (main)
-    //      return try self.ancestor(distance).get(name);
-    // FIXED: Assume this is due to creating binding environment (via function
-    //        closure), but not initEnclosing it to any:
-    //
-    //      defer self.closure.enclosing = environment;
     logger.info(.default, @src(), "Looking up variable '{}'.", .{name});
 
     const distance: i32 = self.locals.get(name.lexeme) orelse {
@@ -605,8 +576,6 @@ fn evaluate(self: *Self, expr: *Expr) Error!Value {
 // one that was active back at the callsite.
 //
 // See https://craftinginterpreters.com/functions.html#function-objects
-//
-/// FIXME: Should closure be a pointer?
 pub fn executeBlock(
     self: *Self,
     body: []Stmt,
@@ -681,7 +650,6 @@ pub fn execute(self: *Self, stmt: *Stmt, writer: anytype) Error!Value {
             const cls: *Class = try Class.init(self.allocator, class.name, methods);
             errdefer cls.destroy(self.allocator);
             try self.environment.assign(class.name, .{ .class = cls });
-
             logger.info(scoper, @src(),
                 \\Executed and assigned class. {s}{}
             , .{ logger.newline, class });
@@ -792,10 +760,3 @@ pub fn interpret(self: *Self, stmts: []Stmt, writer: anytype) Allocator.Error!vo
 // are treated specially and don’t end up in the map (hence the name locals).
 // So, if we don’t find a distance in the map, it must be global. In that case,
 // we look it up, dynamically, directly in the global environment.
-//
-// FIXME:
-//      Where errors bubble up: In the interpreter, specifically in
-//      lookupVariable, the error bubbles up when the global variable is not
-//      found in locals. Since the resolver isn't responsible for resolving
-//      globals, you need to ensure the interpreter properly looks up globals
-//      without relying on local resolution.

@@ -11,6 +11,7 @@ const Token = @import("token.zig");
 const debug = @import("debug.zig");
 const logger = @import("logger.zig");
 
+/// Grammar:
 /// `statement → block | break_stmt | expr_stmt | for_stmt | if_stmt | print_stmt | var_stmt | while_stmt  ;`
 pub const Stmt = union(enum) {
     block: Block,
@@ -79,7 +80,10 @@ pub const Stmt = union(enum) {
             const self = try allocator.create(Function);
             errdefer allocator.destroy(self);
             if (comptime debug.is_trace_garbage_collector) {
-                logger.debug(.default, @src(), "{} allocate {} for {s}", .{ @intFromPtr(&self), @sizeOf(Function), @typeName(Function) });
+                logger.debug(.default, @src(), "{} allocate {} for {s}", .{
+                    @intFromPtr(&self),  @sizeOf(Function),
+                    @typeName(Function),
+                });
             }
 
             return self;
