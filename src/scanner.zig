@@ -1,12 +1,12 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const testing = std.testing;
-const root = @import("root.zig");
 const mem = std.mem;
 const Allocator = mem.Allocator;
 
 const @"error" = @import("main.zig").@"error";
 const Token = @import("token.zig");
+const root = @import("root.zig");
 
 // See also https://craftinginterpreters.com/scanning.html#recognizing-lexemes
 

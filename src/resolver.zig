@@ -152,8 +152,13 @@ fn beginScope(self: *Resolver) Allocator.Error!void {
 }
 
 fn endScope(self: *Resolver) void {
-    const scoper: logger.Scoper = .{ .scope = .{ .name = @src().fn_name, .parent = &beginScopeScoper.scope } };
-    const scope: BlockScope = self.scopes.pop(); // note: pop invalidates element pointers to the removed element
+    const scoper: logger.Scoper = .{ .scope = .{
+        .name = @src().fn_name,
+        .parent = &beginScopeScoper.scope,
+    } };
+
+    // Note: pop invalidates element pointers to the removed element
+    const scope: BlockScope = self.scopes.pop();
 
     logger.info(scoper, @src(),
         \\Finally popped scope!{s}[Metadata: {any}]{s}[Scopes count: {any}]
@@ -182,12 +187,7 @@ fn endScope(self: *Resolver) void {
     }
 }
 
-//
-// declare()
-//
-//
-//
-//
+// See [issue #5](https://github.com/lloydlobo/crafting-interpreters-zig/issues/5)
 //
 // FIXME: NO ERROR REPORTED WHEN UNDEFINED VARIABLE IN A BLOCK SCOPE THAT FOLLOWS A CLASS.
 //
@@ -214,8 +214,6 @@ fn endScope(self: *Resolver) void {
 //         print is_not_reported;
 //     }
 //
-//
-//
 // Declaration adds the variable to the innermost scope so that it shadows any
 // outer one and so that we know the variable exists. We mark it as “not ready
 // yet” by binding its name to false in the scope map. The value associated
@@ -225,7 +223,6 @@ fn endScope(self: *Resolver) void {
 // When we declare a variable in a local scope, we already know the names
 // of every variable previously declared in that same scope. If we see a
 // collision, we report an error.
-//
 fn declare(self: *Resolver, name: Token) Allocator.Error!void {
     const scoper: logger.Scoper = .{ .scope = .{
         .name = @src().fn_name,
@@ -238,8 +235,12 @@ fn declare(self: *Resolver, name: Token) Allocator.Error!void {
     }
 
     if (self.scopes.items[self.scopesSize() - 1].contains(name.lexeme)) {
-        // logger.err(scoper, @src(), "Already a variable with this name in this scope.{s}[name: {any} ]{s}[peeked scope item count: {d}]", //
-        //     .{ logger.newline, name, logger.newline, self.scopes.items[self.scopesSize() - 1].count() });
+        logger.err(scoper, @src(),
+            \\Already a variable with this name in this scope.{s}[name: {any} ]{s}[peeked scope item count: {d}]
+        , .{
+            logger.newline, name,
+            logger.newline, self.scopes.items[self.scopesSize() - 1].count(),
+        });
         try handleTokenError(Error.variable_already_declared, name, "Already a variable with this name in this scope.");
     }
 
@@ -368,7 +369,8 @@ pub fn resolveStatement(self: *Resolver, stmt: *const Stmt) Error!void {
                     var declaration: FunctionType = .method;
                     if (mem.eql(u8, method.name.lexeme, "init")) {
                         declaration = .initializer;
-                    } // See: https://craftinginterpreters.com/classes.html#returning-from-init
+                    }
+                    // See: https://craftinginterpreters.com/classes.html#returning-from-init
 
                     try self.resolveFunction(method, declaration);
                 }
@@ -508,16 +510,6 @@ pub fn resolveExpr(self: *Resolver, expr: *Expr) Error!void {
             try self.resolveLocal(expr, variable);
         },
     }
-}
-
-// Why is this here ???????????????????????????????
-pub fn resolveExpression(allocator: Allocator, interpreter: *Interpreter, expr: *Expr) Error!std.AutoHashMap(*Expr, usize) {
-    const resolver: Resolver = try Resolver.init(allocator, interpreter);
-    defer resolver.deinit();
-
-    try resolver.resolveExpr(expr);
-
-    return resolver.interpreter.locals;
 }
 
 //

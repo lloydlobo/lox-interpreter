@@ -225,7 +225,10 @@ test "basic usage with MultiArrayList" {
 
     try testing.expectEqualSlices(u32, list.items(.line), &[_]u32{ 1, 2 });
     try testing.expectEqualSlices([]const u8, list.items(.lexeme), &[_][]const u8{ "a", "b" });
-    try testing.expectEqualSlices(?Token.Literal, list.items(.literal), &[_]?Token.Literal{ .{ .str = "hello" }, .{ .str = "world" } });
+    try testing.expectEqualSlices(?Token.Literal, list.items(.literal), &[_]?Token.Literal{
+        .{ .str = "hello" },
+        .{ .str = "world" },
+    });
 
     try testing.expectEqual(@as(usize, 2), list.items(.lexeme).len);
     try testing.expectEqualStrings("a", list.items(.lexeme)[0]);

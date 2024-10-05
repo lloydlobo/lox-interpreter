@@ -126,8 +126,9 @@ fn previousValue(self: *const Parser) Value {
     } else unreachable;
 }
 
-/// match is short for consumeToken()
+/// match is short for consumeToken.
 fn match(self: *Parser, comptime types: *const Token.TypeSet) bool {
+    // Leaving out previous implementation just for reference:
     // fn match(self: *Parser, types: anytype) bool {
     //    return inline for (std.meta.fields(@TypeOf(types))) |field| {
     //        if (self.check(@field(types, field.name))) {

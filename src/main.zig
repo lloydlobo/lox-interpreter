@@ -11,21 +11,6 @@ const debug = @import("debug.zig");
 const logger = @import("logger.zig");
 const root = @import("root.zig");
 
-// # NOTES
-//
-// ## Interpreter
-//
-// * Using a more structured error handling approach instead of global variables.
-// * Ensuring proper memory management for all allocated objects.
-// * Implementing a more direct method for handling function returns.
-// * Ensuring the resolver is properly integrated into the interpretation process.
-//
-// ## Resolver
-//
-// * Consider unifying the error handling approach between the resolver and interpreter.
-// * Consider making the handling of global variables more explicit in both the resolver and interpreter.
-
-// Just use this to read, and not edit globally but from functions in `main.zig`.
 pub var g_had_runtime_error: bool = false;
 pub var g_runtime_error_count: usize = 0;
 pub var g_had_error: bool = false;

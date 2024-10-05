@@ -9,13 +9,13 @@ const Allocator = mem.Allocator;
 const Callable = @import("callable.zig");
 const Class = @import("class.zig");
 const Environment = @import("environment.zig");
-const Interpreter = @import("interpreter.zig");
 const Function = @import("function.zig");
+const Interpreter = @import("interpreter.zig");
 const Stmt = @import("stmt.zig").Stmt;
 const Token = @import("token.zig");
 const Value = @import("value.zig").Value;
-const logger = @import("logger.zig");
 const debug = @import("debug.zig");
+const logger = @import("logger.zig");
 const root = @import("root.zig");
 
 const Instance = @This();
@@ -66,8 +66,7 @@ pub fn destroy(self: *Instance, allocator: Allocator) void {
 /// Caller should handle errors and set runtime token for logging error.
 pub fn get(self: *Instance, name: Token) !Value {
     if (self.fields.get(name.lexeme)) |value| {
-        // Unreleated to returning dummy value like `nil`
-        // in other interpreted languages.
+        // Unreleated to returning dummy value like `nil` in other interpreted languages.
         if (comptime debug.is_trace_interpreter) {
             switch (value) {
                 .nil => logger.info(.default, @src(), "Got nil value for '{}'", .{name}),
@@ -88,6 +87,8 @@ pub fn get(self: *Instance, name: Token) !Value {
             return value;
         }
     } else {
+        // NOTE: Related to [issue: #5](https://github.com/lloydlobo/crafting-interpreters-zig/issues/5)?
+        //
         // NOTE: the resolver has a new __scope__ for `this`, so the interpreter
         // needs to create a corresponding environment for it. (resolver's
         // scope chains and interpreter's link environment must always be in
@@ -111,7 +112,11 @@ pub fn toString(callable: *const Callable) []const u8 {
     const self: *Instance = @constCast(@fieldParentPtr("callable", callable));
 
     const token: Token = self.class.name;
-    const buffer = std.fmt.allocPrint(callable.allocator, "{s} instance", .{token.lexeme}) catch |err| {
+    const buffer = std.fmt.allocPrint(
+        callable.allocator,
+        "{s} instance",
+        .{token.lexeme},
+    ) catch |err| {
         Interpreter.panicRuntimeError(err, token);
     };
 
@@ -187,7 +192,12 @@ test "Instance toString" {
 
     const method_declaration =
         Stmt.Function{
-        .name = Token{ .type = .identifier, .lexeme = "test_class_instance_method_function", .line = 1, .literal = null },
+        .name = Token{
+            .type = .identifier,
+            .lexeme = "test_class_instance_method_function",
+            .line = 1,
+            .literal = null,
+        },
         .parameters = @constCast(
             &[_]Token{
                 Token{ .type = .identifier, .lexeme = "a", .line = 1, .literal = null },
@@ -205,7 +215,10 @@ test "Instance toString" {
         .methods = try methods.toOwnedSlice(),
     };
 
-    try testing.expectEqualStrings("test_class_instance_method_function", cls_declaration.methods[0].name.lexeme);
+    try testing.expectEqualStrings(
+        "test_class_instance_method_function",
+        cls_declaration.methods[0].name.lexeme,
+    );
 
     const cls = try Class.init(allocator, cls_declaration.name);
     defer cls.destroy(allocator);
